@@ -1,8 +1,10 @@
 use async_std::{
-    net::{TcpListener, ToSocketAddrs},
+    io::BufReader,
+    net::{TcpListener, TcpStream, ToSocketAddrs},
     prelude::*,
     task,
 };
+use std::sync::Arc;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
@@ -15,8 +17,36 @@ fn main() -> Result<()> {
 async fn accept_loop(addr: impl ToSocketAddrs) -> Result<()> {
     let listener = TcpListener::bind(addr).await?;
     let mut incoming = listener.incoming();
-    while let Some(_stream) = incoming.next().await {
-        // TODO
+    while let Some(stream) = incoming.next().await {
+        let stream = stream?;
+        println!("Accepting from: {}", stream.peer_addr()?);
+        let _handle = spawn_and_log_error(connection_loop(stream));
     }
     Ok(())
+}
+
+async fn connection_loop(stream: TcpStream) -> Result<()> {
+    let stream = Arc::new(stream);
+    let reader = BufReader::new(&*stream);
+    let mut lines = reader.lines();
+
+    while let Some(line) = lines.next().await {
+        let mut line: String = line?;
+        line.push('\n');
+        let mut stream = &*stream;
+        stream.write_all(line.as_bytes()).await?;
+    }
+
+    Ok(())
+}
+
+fn spawn_and_log_error<F>(fut: F) -> task::JoinHandle<()>
+where
+    F: Future<Output = Result<()>> + Send + 'static,
+{
+    task::spawn(async move {
+        if let Err(e) = fut.await {
+            eprintln!("{}", e)
+        }
+    })
 }
