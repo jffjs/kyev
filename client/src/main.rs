@@ -7,7 +7,6 @@ fn main() -> Result<()> {
     // let stream = TcpStream::connect("127.0.0.1:8080");
     // let (reader, mut writer) = (&stream, &stream);
 
-    println!("foo");
     loop {
         write_prompt();
         let mut input = String::new();
