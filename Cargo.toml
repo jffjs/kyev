@@ -17,4 +17,4 @@ name = "kyev-cli"
 path = "client/src/main.rs"
 
 [dependencies]
-async-std = "1.2.0"
+async-std = "1.4.0"
