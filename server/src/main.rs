@@ -28,14 +28,29 @@ async fn accept_loop(addr: impl ToSocketAddrs) -> Result<()> {
 
 async fn connection_loop(client_addr: SocketAddr, stream: TcpStream) -> Result<()> {
     let stream = Arc::new(stream);
-    let reader = BufReader::new(&*stream);
-    let mut lines = reader.lines();
+    let mut reader = BufReader::new(&*stream);
+    let mut string_buf = String::new();
 
-    while let Some(line) = lines.next().await {
-        let mut line: String = line?;
-        line.push('\n');
-        let mut stream = &*stream;
-        stream.write_all(line.as_bytes()).await?;
+    while let Ok(bytes_read) = reader.read_line(&mut string_buf).await {
+        if bytes_read == 0 {
+            break;
+        }
+
+        match resp::decode(&string_buf) {
+            Ok(value) => {
+                println!("{:?}", value);
+                let response = resp::encode(&resp::simple_string("PONG"));
+                let mut stream = &*stream;
+                stream.write_all(response.as_bytes()).await?;
+                string_buf.clear();
+            }
+            Err(resp::Error::IncompleteRespError) => continue,
+            _ => {
+                println!("{}", string_buf);
+                println!("Invalid resp!");
+                string_buf.clear();
+            }
+        }
     }
 
     println!("Client disconnected: {}", client_addr);

@@ -1,7 +1,7 @@
 use std::convert::From;
 use std::io::{BufRead, BufReader, Read};
 
-static DELIMITER: &'static str = "\r\n";
+static DELIMITER: &str = "\r\n";
 
 #[derive(Debug, PartialEq)]
 pub enum Error {
@@ -30,7 +30,60 @@ impl From<std::str::Utf8Error> for Error {
 #[derive(Debug, PartialEq)]
 pub enum Value {
     Array(Vec<Value>),
-    String(String),
+    SimpleString(String),
+    BulkString(String),
+}
+
+pub fn array(a: Vec<Value>) -> Value {
+    Value::Array(a)
+}
+
+pub fn simple_string(s: &str) -> Value {
+    Value::SimpleString(s.to_owned())
+}
+
+pub fn bulk_string(s: &str) -> Value {
+    Value::BulkString(s.to_owned())
+}
+
+pub fn encode(value: &Value) -> String {
+    match value {
+        Value::SimpleString(_) => encode_simple_string(value),
+        Value::BulkString(_) => encode_bulk_string(value),
+        Value::Array(_) => encode_array(value),
+    }
+}
+
+fn encode_simple_string(value: &Value) -> String {
+    match value {
+        Value::SimpleString(s) => format!("+{}\r\n", s),
+        _ => panic!("Must be called with Value::SimpleString"),
+    }
+}
+
+fn encode_bulk_string(value: &Value) -> String {
+    match value {
+        Value::BulkString(s) => {
+            let byte_count = s.bytes().len();
+            format!("${}\r\n{}\r\n", byte_count, s)
+        }
+        _ => panic!("Must be called with Value::BulkString"),
+    }
+}
+
+fn encode_array(value: &Value) -> String {
+    match value {
+        Value::Array(array) => {
+            let mut string_buf = String::new();
+
+            for value in array.iter() {
+                string_buf.push_str(&encode(&value));
+            }
+
+            format!("*{}\r\n{}", array.len(), string_buf)
+        }
+        _ => panic!("Must be called with Value::Array"),
+    }
 }
 
 pub fn decode(s: &str) -> Result<Value, Error> {
@@ -54,7 +107,7 @@ fn decode_simple_string(buf_reader: &mut BufReader<&[u8]>) -> Result<Value, Erro
     buf_reader.read_line(&mut buf)?;
 
     if buf.ends_with(DELIMITER) {
-        Ok(Value::String(buf.trim_end().to_owned()))
+        Ok(Value::SimpleString(buf.trim_end().to_owned()))
     } else {
         Err(Error::IncompleteRespError)
     }
@@ -77,7 +130,7 @@ fn decode_bulk_string(buf_reader: &mut BufReader<&[u8]>) -> Result<Value, Error>
         return Err(Error::IncompleteRespError);
     }
 
-    Ok(Value::String(string.to_owned()))
+    Ok(Value::BulkString(string.to_owned()))
 }
 
 fn decode_array(buf_reader: &mut BufReader<&[u8]>) -> Result<Value, Error> {
@@ -110,9 +163,60 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_simple_string() {
-        assert_eq!(Ok(Value::String("OK".to_owned())), decode("+OK\r\n"));
-        assert_eq!(Ok(Value::String("HEY".to_owned())), decode("+HEY\r\n"));
+    fn test_encode_simple_string() {
+        assert_eq!(
+            "+OK\r\n".to_owned(),
+            encode(&Value::SimpleString("OK".to_owned()))
+        );
+        assert_eq!(
+            "+HEY\r\n".to_owned(),
+            encode(&Value::SimpleString("HEY".to_owned()))
+        );
+        assert_eq!(
+            "+What's up\r\n".to_owned(),
+            encode(&Value::SimpleString("What's up".to_owned()))
+        );
+    }
+
+    #[test]
+    fn test_encode_bulk_string() {
+        assert_eq!(
+            "$2\r\nOK\r\n".to_owned(),
+            encode(&Value::BulkString("OK".to_owned()))
+        );
+        assert_eq!(
+            "$3\r\nHEY\r\n".to_owned(),
+            encode(&Value::BulkString("HEY".to_owned()))
+        );
+        assert_eq!(
+            "$7\r\nHEY\r\nYA\r\n".to_owned(),
+            encode(&Value::BulkString("HEY\r\nYA".to_owned()))
+        );
+    }
+
+    #[test]
+    fn test_encode_array() {
+        assert_eq!(
+            "*1\r\n$4\r\nPING\r\n".to_owned(),
+            encode(&Value::Array(vec![Value::BulkString("PING".to_owned())])),
+        );
+
+        assert_eq!(
+            "*2\r\n$4\r\nECHO\r\n$3\r\nhey\r\n".to_owned(),
+            encode(&Value::Array(vec![
+                Value::BulkString("ECHO".to_owned()),
+                Value::BulkString("hey".to_owned())
+            ])),
+        );
+    }
+
+    #[test]
+    fn test_decode_simple_string() {
+        assert_eq!(Ok(Value::SimpleString("OK".to_owned())), decode("+OK\r\n"));
+        assert_eq!(
+            Ok(Value::SimpleString("HEY".to_owned())),
+            decode("+HEY\r\n")
+        );
         assert_eq!(Err(Error::IncompleteRespError), decode("+"));
         assert_eq!(Err(Error::IncompleteRespError), decode("+OK"));
         assert_eq!(Err(Error::IncompleteRespError), decode("+OK\r"));
@@ -120,11 +224,17 @@ mod tests {
     }
 
     #[test]
-    fn test_bulk_string() {
-        assert_eq!(Ok(Value::String("OK".to_owned())), decode("$2\r\nOK\r\n"));
-        assert_eq!(Ok(Value::String("HEY".to_owned())), decode("$3\r\nHEY\r\n"));
+    fn test_decode_bulk_string() {
         assert_eq!(
-            Ok(Value::String("HEY\r\nYA".to_owned())),
+            Ok(Value::BulkString("OK".to_owned())),
+            decode("$2\r\nOK\r\n")
+        );
+        assert_eq!(
+            Ok(Value::BulkString("HEY".to_owned())),
+            decode("$3\r\nHEY\r\n")
+        );
+        assert_eq!(
+            Ok(Value::BulkString("HEY\r\nYA".to_owned())),
             decode("$7\r\nHEY\r\nYA\r\n")
         );
         assert_eq!(Err(Error::IncompleteRespError), decode("$"));
@@ -138,16 +248,16 @@ mod tests {
     }
 
     #[test]
-    fn test_arrays() {
+    fn test_decode_arrays() {
         assert_eq!(
-            Ok(Value::Array(vec![Value::String("PING".to_owned())])),
+            Ok(Value::Array(vec![Value::BulkString("PING".to_owned())])),
             decode("*1\r\n$4\r\nPING\r\n")
         );
 
         assert_eq!(
             Ok(Value::Array(vec![
-                Value::String("ECHO".to_owned()),
-                Value::String("hey".to_owned())
+                Value::BulkString("ECHO".to_owned()),
+                Value::BulkString("hey".to_owned())
             ])),
             decode("*2\r\n$4\r\nECHO\r\n$3\r\nhey\r\n")
         );
