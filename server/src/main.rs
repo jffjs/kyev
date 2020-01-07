@@ -1,6 +1,6 @@
 use async_std::{
     io::BufReader,
-    net::{TcpListener, TcpStream, ToSocketAddrs},
+    net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs},
     prelude::*,
     task,
 };
@@ -19,13 +19,14 @@ async fn accept_loop(addr: impl ToSocketAddrs) -> Result<()> {
     let mut incoming = listener.incoming();
     while let Some(stream) = incoming.next().await {
         let stream = stream?;
-        println!("Accepting from: {}", stream.peer_addr()?);
-        let _handle = spawn_and_log_error(connection_loop(stream));
+        let client_addr = stream.peer_addr()?;
+        println!("Accepting from: {}", client_addr);
+        let _handle = spawn_and_log_error(connection_loop(client_addr, stream));
     }
     Ok(())
 }
 
-async fn connection_loop(stream: TcpStream) -> Result<()> {
+async fn connection_loop(client_addr: SocketAddr, stream: TcpStream) -> Result<()> {
     let stream = Arc::new(stream);
     let reader = BufReader::new(&*stream);
     let mut lines = reader.lines();
@@ -36,6 +37,8 @@ async fn connection_loop(stream: TcpStream) -> Result<()> {
         let mut stream = &*stream;
         stream.write_all(line.as_bytes()).await?;
     }
+
+    println!("Client disconnected: {}", client_addr);
 
     Ok(())
 }
