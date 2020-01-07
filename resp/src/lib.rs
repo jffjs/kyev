@@ -63,7 +63,6 @@ fn decode_simple_string(buf_reader: &mut BufReader<&[u8]>) -> Result<Value, Erro
 fn decode_bulk_string(buf_reader: &mut BufReader<&[u8]>) -> Result<Value, Error> {
     let byte_count = read_int_with_clrf(buf_reader)?;
 
-    dbg!(byte_count);
     let mut buf = vec![0; byte_count];
     buf_reader.read_exact(&mut buf)?;
     let string = std::str::from_utf8(&buf)?;
@@ -82,7 +81,16 @@ fn decode_bulk_string(buf_reader: &mut BufReader<&[u8]>) -> Result<Value, Error>
 }
 
 fn decode_array(buf_reader: &mut BufReader<&[u8]>) -> Result<Value, Error> {
-    unimplemented!()
+    let element_count = read_int_with_clrf(buf_reader)?;
+
+    let mut resp_array = Vec::with_capacity(element_count);
+
+    for _ in 0..element_count {
+        let value = do_decode(buf_reader)?;
+        resp_array.push(value);
+    }
+
+    Ok(Value::Array(resp_array))
 }
 
 fn read_int_with_clrf(buf_reader: &mut BufReader<&[u8]>) -> Result<usize, Error> {
@@ -131,9 +139,26 @@ mod tests {
 
     #[test]
     fn test_arrays() {
-        // assert_eq!(
-        //     Ok(Value::Array(vec![Value::String("PING".to_owned())])),
-        //     decode("*1\r\n$4\r\nPING\r\n")
-        // )
+        assert_eq!(
+            Ok(Value::Array(vec![Value::String("PING".to_owned())])),
+            decode("*1\r\n$4\r\nPING\r\n")
+        );
+
+        assert_eq!(
+            Ok(Value::Array(vec![
+                Value::String("ECHO".to_owned()),
+                Value::String("hey".to_owned())
+            ])),
+            decode("*2\r\n$4\r\nECHO\r\n$3\r\nhey\r\n")
+        );
+
+        assert_eq!(Err(Error::IncompleteRespError), decode("*"));
+        assert_eq!(Err(Error::IncompleteRespError), decode("*1"));
+        assert_eq!(Err(Error::IncompleteRespError), decode("*1\r\n"));
+        assert_eq!(Err(Error::IncompleteRespError), decode("*1\r\n$4"));
+        assert_eq!(
+            Err(Error::IncompleteRespError),
+            decode("*2\r\n$4\r\nECHO\r\n")
+        );
     }
 }
