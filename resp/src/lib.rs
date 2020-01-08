@@ -34,6 +34,17 @@ pub enum Value {
     BulkString(String),
 }
 
+impl Value {
+    pub fn to_string(&self) -> Option<String> {
+        use Value::*;
+
+        match self {
+            SimpleString(s) | BulkString(s) => Some(s.to_string()),
+            _ => None,
+        }
+    }
+}
+
 pub fn array(a: Vec<Value>) -> Value {
     Value::Array(a)
 }

@@ -6,12 +6,29 @@ use async_std::{
 };
 use std::sync::Arc;
 
+use kyev::command::Command;
+
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
 fn main() -> Result<()> {
     let fut = accept_loop("127.0.0.1:8080");
     println!("Listening on port 8080");
     task::block_on(fut)
+}
+
+fn execute_cmd(resp_val: resp::Value) -> String {
+    use kyev::command::Action::*;
+
+    if let Ok(cmd) = Command::from_resp(resp_val) {
+        match cmd.action() {
+            Ping => resp::encode(&resp::simple_string("PONG")),
+            Echo => resp::encode(&resp::simple_string(
+                &cmd.args().first().unwrap_or(&String::new()),
+            )),
+        }
+    } else {
+        resp::encode(&resp::simple_string("INVALID COMMAND"))
+    }
 }
 
 async fn accept_loop(addr: impl ToSocketAddrs) -> Result<()> {
@@ -38,8 +55,7 @@ async fn connection_loop(client_addr: SocketAddr, stream: TcpStream) -> Result<(
 
         match resp::decode(&string_buf) {
             Ok(value) => {
-                println!("{:?}", value);
-                let response = resp::encode(&resp::simple_string("PONG"));
+                let response = execute_cmd(value);
                 let mut stream = &*stream;
                 stream.write_all(response.as_bytes()).await?;
                 string_buf.clear();
