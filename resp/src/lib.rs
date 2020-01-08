@@ -32,6 +32,8 @@ pub enum Value {
     Array(Vec<Value>),
     SimpleString(String),
     BulkString(String),
+    Error(String),
+    Integer(i64),
 }
 
 impl Value {
@@ -57,11 +59,21 @@ pub fn bulk_string(s: &str) -> Value {
     Value::BulkString(s.to_owned())
 }
 
+pub fn error(s: &str) -> Value {
+    Value::Error(s.to_owned())
+}
+
+pub fn integer(i: i64) -> Value {
+    Value::Integer(i)
+}
+
 pub fn encode(value: &Value) -> String {
     match value {
         Value::SimpleString(_) => encode_simple_string(value),
         Value::BulkString(_) => encode_bulk_string(value),
         Value::Array(_) => encode_array(value),
+        Value::Error(_) => encode_error(value),
+        Value::Integer(_) => encode_integer(value),
     }
 }
 
@@ -72,6 +84,13 @@ fn encode_simple_string(value: &Value) -> String {
     }
 }
 
+fn encode_error(value: &Value) -> String {
+    match value {
+        Value::Error(s) => format!("-{}\r\n", s),
+        _ => panic!("Must be called with Value::Error"),
+    }
+}
+
 fn encode_bulk_string(value: &Value) -> String {
     match value {
         Value::BulkString(s) => {
@@ -79,6 +98,13 @@ fn encode_bulk_string(value: &Value) -> String {
             format!("${}\r\n{}\r\n", byte_count, s)
         }
         _ => panic!("Must be called with Value::BulkString"),
+    }
+}
+
+fn encode_integer(value: &Value) -> String {
+    match value {
+        Value::Integer(i) => format!(":{}\r\n", i),
+        _ => panic!("Must be called with Value::Integer"),
     }
 }
 
@@ -109,6 +135,8 @@ fn do_decode(buf_reader: &mut BufReader<&[u8]>) -> Result<Value, Error> {
         b'+' => decode_simple_string(buf_reader),
         b'$' => decode_bulk_string(buf_reader),
         b'*' => decode_array(buf_reader),
+        b'-' => decode_error(buf_reader),
+        b':' => decode_integer(buf_reader),
         _ => Err(Error::InvalidRespError),
     }
 }
@@ -119,6 +147,17 @@ fn decode_simple_string(buf_reader: &mut BufReader<&[u8]>) -> Result<Value, Erro
 
     if buf.ends_with(DELIMITER) {
         Ok(Value::SimpleString(buf.trim_end().to_owned()))
+    } else {
+        Err(Error::IncompleteRespError)
+    }
+}
+
+fn decode_error(buf_reader: &mut BufReader<&[u8]>) -> Result<Value, Error> {
+    let mut buf = String::new();
+    buf_reader.read_line(&mut buf)?;
+
+    if buf.ends_with(DELIMITER) {
+        Ok(Value::Error(buf.trim_end().to_owned()))
     } else {
         Err(Error::IncompleteRespError)
     }
@@ -142,6 +181,17 @@ fn decode_bulk_string(buf_reader: &mut BufReader<&[u8]>) -> Result<Value, Error>
     }
 
     Ok(Value::BulkString(string.to_owned()))
+}
+
+fn decode_integer(buf_reader: &mut BufReader<&[u8]>) -> Result<Value, Error> {
+    let mut buf = String::new();
+    buf_reader.read_line(&mut buf)?;
+
+    if buf.ends_with(DELIMITER) {
+        Ok(Value::Integer(buf.trim_end().parse::<i64>()?))
+    } else {
+        Err(Error::IncompleteRespError)
+    }
 }
 
 fn decode_array(buf_reader: &mut BufReader<&[u8]>) -> Result<Value, Error> {
@@ -222,6 +272,19 @@ mod tests {
     }
 
     #[test]
+    fn test_encode_errors() {
+        assert_eq!(
+            "-ERR unknown command\r\n",
+            encode(&Value::Error("ERR unknown command".to_owned()))
+        );
+    }
+
+    #[test]
+    fn test_encode_integers() {
+        assert_eq!(":10\r\n", encode(&Value::Integer(10)));
+    }
+
+    #[test]
     fn test_decode_simple_string() {
         assert_eq!(Ok(Value::SimpleString("OK".to_owned())), decode("+OK\r\n"));
         assert_eq!(
@@ -281,5 +344,24 @@ mod tests {
             Err(Error::IncompleteRespError),
             decode("*2\r\n$4\r\nECHO\r\n")
         );
+    }
+
+    #[test]
+    fn test_decode_errors() {
+        assert_eq!(
+            Ok(Value::Error("ERR unknown command".to_owned())),
+            decode("-ERR unknown command\r\n")
+        );
+        assert_eq!(
+            Err(Error::IncompleteRespError),
+            decode("-ERR unknown command")
+        );
+    }
+
+    #[test]
+    fn test_decode_integers() {
+        assert_eq!(Ok(Value::Integer(10)), decode(":10\r\n"));
+        assert_eq!(Err(Error::IncompleteRespError), decode(":10"));
+        assert_eq!(Err(Error::InvalidRespError), decode(":foo\r\n"));
     }
 }
