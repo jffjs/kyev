@@ -1,5 +1,4 @@
 use resp;
-use std::error::Error;
 use std::fmt;
 
 pub enum Action {
@@ -48,6 +47,12 @@ impl Command {
                         match action {
                             Action::Ping => Ok(Command::new(action, vec![])),
                             Action::Echo => {
+                                if array.len() > 2 {
+                                    return Err(ParseCommandError::new(
+                                        WrongNumberArgs,
+                                        Some(cmd_str),
+                                    ));
+                                }
                                 let arg = iter
                                     .next()
                                     .ok_or(ParseCommandError::new(InvalidArgs, Some(cmd_str)))?
@@ -86,6 +91,7 @@ pub enum ParseCommandErrorKind {
     UnknownCommand,
     InvalidArgs,
     InvalidCommand,
+    WrongNumberArgs,
 }
 
 impl ParseCommandError {
@@ -107,20 +113,22 @@ impl ParseCommandError {
 
 impl fmt::Display for ParseCommandError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        self.description().fmt(f)
-    }
-}
-
-impl Error for ParseCommandError {
-    fn description(&self) -> &str {
         use self::ParseCommandErrorKind::*;
 
-        match self.kind {
-            MustBeArray => "must be an array",
-            IsEmpty => "array must contain at least one value",
-            UnknownCommand => "unknown command",
-            InvalidArgs => "invalid arguments for command",
-            InvalidCommand => "command values must be Bulk Strings",
+        let empty_string = &String::default();
+        let command = self
+            .command()
+            .as_ref()
+            .unwrap_or(empty_string)
+            .to_lowercase();
+
+        match &self.kind {
+            MustBeArray => "ERR must be an array".fmt(f),
+            IsEmpty => "ERR array must contain at least one value".fmt(f),
+            UnknownCommand => write!(f, "ERR Unknown or disabled command '{}'", command),
+            InvalidArgs => "ERR invalid arguments for command".fmt(f),
+            InvalidCommand => "ERR command values must be Bulk Strings".fmt(f),
+            WrongNumberArgs => write!(f, "ERR wrong number of arguments for '{}' command", command),
         }
     }
 }

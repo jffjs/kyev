@@ -49,8 +49,32 @@ fn main() -> Result<()> {
         let resp = encode_resp(&input);
 
         writer.write(resp.as_bytes())?;
-        buf_reader.read_line(&mut output)?;
-        print!("{}", output);
+        while let Ok(bytes_read) = buf_reader.read_line(&mut output) {
+            if bytes_read == 0 {
+                break;
+            }
+
+            match resp::decode(&output) {
+                Ok(value) => match value {
+                    resp::Value::SimpleString(s) | resp::Value::BulkString(s) => {
+                        println!("\"{}\"", s);
+                        output.clear();
+                        break;
+                    }
+                    resp::Value::Error(e) => {
+                        println!("{}", e);
+                        output.clear();
+                        break;
+                    }
+                    _ => unimplemented!(),
+                },
+                Err(resp::Error::IncompleteRespError) => continue,
+                _ => {
+                    println!("ERR invalid response");
+                    output.clear();
+                }
+            }
+        }
     }
 }
 
@@ -60,9 +84,59 @@ fn write_prompt(host: &str) {
 }
 
 fn encode_resp(input: &str) -> String {
-    let array = input
-        .split_whitespace()
-        .map(|s| resp::bulk_string(s))
+    let array = tokenize(input.trim_end())
+        .iter()
+        .map(|s| resp::bulk_string(s.as_str()))
         .collect();
     resp::encode(&resp::array(array))
+}
+
+fn tokenize(s: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut chars = s.chars();
+
+    let mut in_quote = false;
+    let mut token = String::new();
+    while let Some(c) = chars.next() {
+        if c == '"' {
+            in_quote = !in_quote;
+            continue;
+        }
+
+        if c == ' ' && !in_quote && !token.is_empty() {
+            tokens.push(token.clone());
+            token.clear();
+            continue;
+        }
+
+        token.push(c);
+    }
+
+    if !token.is_empty() {
+        tokens.push(token);
+    }
+
+    tokens
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_input() {
+        assert_eq!(vec!["PING".to_owned()], tokenize("PING"));
+        assert_eq!(
+            vec!["ECHO".to_owned(), "foo".to_owned()],
+            tokenize("ECHO foo")
+        );
+        assert_eq!(
+            vec!["ECHO".to_owned(), "foo".to_owned(), "bar".to_owned()],
+            tokenize("ECHO foo bar")
+        );
+        assert_eq!(
+            vec!["ECHO".to_owned(), "foo bar".to_owned()],
+            tokenize("ECHO \"foo bar\"")
+        );
+    }
 }

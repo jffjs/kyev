@@ -19,15 +19,17 @@ fn main() -> Result<()> {
 fn execute_cmd(resp_val: resp::Value) -> String {
     use kyev::command::Action::*;
 
-    if let Ok(cmd) = Command::from_resp(resp_val) {
-        match cmd.action() {
+    match Command::from_resp(resp_val) {
+        Ok(cmd) => match cmd.action() {
             Ping => resp::encode(&resp::simple_string("PONG")),
-            Echo => resp::encode(&resp::simple_string(
+            Echo => resp::encode(&resp::bulk_string(
                 &cmd.args().first().unwrap_or(&String::new()),
             )),
+        },
+        Err(e) => {
+            let msg = format!("{}", e);
+            resp::encode(&resp::error(msg.as_str()))
         }
-    } else {
-        resp::encode(&resp::simple_string("INVALID COMMAND"))
     }
 }
 
