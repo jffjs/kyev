@@ -7,6 +7,23 @@ pub enum Action {
     Echo,
 }
 
+impl Action {
+    pub fn from_str(s: &str) -> Result<Action, ParseCommandError> {
+        let s = s.to_uppercase();
+        let s = s.as_str();
+        if s == "PING" {
+            Ok(Action::Ping)
+        } else if s == "ECHO" {
+            Ok(Action::Echo)
+        } else {
+            Err(ParseCommandError::new(
+                ParseCommandErrorKind::UnknownCommand,
+                Some(s),
+            ))
+        }
+    }
+}
+
 pub struct Command {
     action: Action,
     args: Vec<String>,
@@ -23,30 +40,27 @@ impl Command {
         match resp_value {
             resp::Value::Array(array) => {
                 let mut iter = array.iter();
-                let action = iter.next().ok_or(ParseCommandError { kind: IsEmpty })?;
-                match action {
-                    resp::Value::BulkString(cmd) | resp::Value::SimpleString(cmd) => {
-                        if cmd.as_str() == "PING" {
-                            Ok(Command::new(Action::Ping, vec![]))
-                        } else if cmd.as_str() == "ECHO" {
-                            let arg = iter
-                                .next()
-                                .ok_or(ParseCommandError { kind: InvalidArgs })?
-                                .to_string()
-                                .ok_or(ParseCommandError { kind: InvalidArgs })?;
-                            Ok(Command::new(Action::Echo, vec![arg]))
-                        } else {
-                            Err(ParseCommandError {
-                                kind: UnknownCommand,
-                            })
+                let action_resp = iter.next().ok_or(ParseCommandError::new(IsEmpty, None))?;
+                match action_resp {
+                    resp::Value::BulkString(cmd) => {
+                        let cmd_str = cmd.as_str();
+                        let action = Action::from_str(cmd_str)?;
+                        match action {
+                            Action::Ping => Ok(Command::new(action, vec![])),
+                            Action::Echo => {
+                                let arg = iter
+                                    .next()
+                                    .ok_or(ParseCommandError::new(InvalidArgs, Some(cmd_str)))?
+                                    .to_string()
+                                    .ok_or(ParseCommandError::new(InvalidArgs, Some(cmd_str)))?;
+                                Ok(Command::new(Action::Echo, vec![arg]))
+                            }
                         }
                     }
-                    _ => Err(ParseCommandError {
-                        kind: UnknownCommand,
-                    }),
+                    _ => Err(ParseCommandError::new(InvalidCommand, None)),
                 }
             }
-            _ => Err(ParseCommandError { kind: MustBeArray }),
+            _ => Err(ParseCommandError::new(MustBeArray, None)),
         }
     }
 
@@ -62,6 +76,7 @@ impl Command {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParseCommandError {
     kind: ParseCommandErrorKind,
+    command: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -70,11 +85,23 @@ pub enum ParseCommandErrorKind {
     IsEmpty,
     UnknownCommand,
     InvalidArgs,
+    InvalidCommand,
 }
 
 impl ParseCommandError {
+    pub fn new(kind: ParseCommandErrorKind, command: Option<&str>) -> ParseCommandError {
+        ParseCommandError {
+            kind,
+            command: command.map(|c| c.to_owned()),
+        }
+    }
+
     pub fn kind(&self) -> &ParseCommandErrorKind {
         &self.kind
+    }
+
+    pub fn command(&self) -> &Option<String> {
+        &self.command
     }
 }
 
@@ -91,8 +118,9 @@ impl Error for ParseCommandError {
         match self.kind {
             MustBeArray => "must be an array",
             IsEmpty => "array must contain at least one value",
-            UnknownCommand => "command unknown",
+            UnknownCommand => "unknown command",
             InvalidArgs => "invalid arguments for command",
+            InvalidCommand => "command values must be Bulk Strings",
         }
     }
 }
