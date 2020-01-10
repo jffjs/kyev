@@ -1,6 +1,7 @@
 use resp;
 use std::fmt;
 
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Action {
     Ping,
     Echo,
@@ -23,6 +24,7 @@ impl Action {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Command {
     action: Action,
     args: Vec<String>,
@@ -45,19 +47,28 @@ impl Command {
                         let cmd_str = cmd.as_str();
                         let action = Action::from_str(cmd_str)?;
                         match action {
-                            Action::Ping => Ok(Command::new(action, vec![])),
+                            Action::Ping => {
+                                expect_max_args(cmd_str, &array, 1)?;
+                                let args = match iter.next() {
+                                    Some(value) => {
+                                        let arg = value.to_string().map_err(|_| {
+                                            ParseCommandError::new(InvalidArgs, Some(cmd_str))
+                                        })?;
+                                        vec![arg]
+                                    }
+                                    None => vec![],
+                                };
+                                Ok(Command::new(action, args))
+                            }
                             Action::Echo => {
-                                if array.len() > 2 {
-                                    return Err(ParseCommandError::new(
-                                        WrongNumberArgs,
-                                        Some(cmd_str),
-                                    ));
-                                }
+                                expect_max_args(cmd_str, &array, 1)?;
                                 let arg = iter
                                     .next()
-                                    .ok_or(ParseCommandError::new(InvalidArgs, Some(cmd_str)))?
+                                    .ok_or(ParseCommandError::new(WrongNumberArgs, Some(cmd_str)))?
                                     .to_string()
-                                    .ok_or(ParseCommandError::new(InvalidArgs, Some(cmd_str)))?;
+                                    .map_err(|_| {
+                                        ParseCommandError::new(InvalidArgs, Some(cmd_str))
+                                    })?;
                                 Ok(Command::new(Action::Echo, vec![arg]))
                             }
                         }
@@ -75,6 +86,21 @@ impl Command {
 
     pub fn args(&self) -> &Vec<String> {
         &self.args
+    }
+}
+
+fn expect_max_args(
+    cmd_str: &str,
+    v: &Vec<resp::Value>,
+    max: usize,
+) -> Result<(), ParseCommandError> {
+    if v.len() > max + 1 {
+        Err(ParseCommandError::new(
+            ParseCommandErrorKind::WrongNumberArgs,
+            Some(cmd_str),
+        ))
+    } else {
+        Ok(())
     }
 }
 

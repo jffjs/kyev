@@ -21,7 +21,13 @@ fn execute_cmd(resp_val: resp::Value) -> String {
 
     match Command::from_resp(resp_val) {
         Ok(cmd) => match cmd.action() {
-            Ping => resp::encode(&resp::simple_string("PONG")),
+            Ping => resp::encode(
+                &(if let Some(arg) = cmd.args().first() {
+                    resp::bulk_string(&arg)
+                } else {
+                    resp::simple_string("PONG")
+                }),
+            ),
             Echo => resp::encode(&resp::bulk_string(
                 &cmd.args().first().unwrap_or(&String::new()),
             )),

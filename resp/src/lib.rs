@@ -7,6 +7,7 @@ static DELIMITER: &str = "\r\n";
 pub enum Error {
     IncompleteRespError,
     InvalidRespError,
+    NotStringError,
 }
 
 impl From<std::io::Error> for Error {
@@ -37,12 +38,10 @@ pub enum Value {
 }
 
 impl Value {
-    pub fn to_string(&self) -> Option<String> {
-        use Value::*;
-
+    pub fn to_string(&self) -> Result<String, Error> {
         match self {
-            SimpleString(s) | BulkString(s) => Some(s.to_string()),
-            _ => None,
+            Value::SimpleString(s) | Value::BulkString(s) => Ok(s.to_string()),
+            _ => Err(Error::NotStringError),
         }
     }
 }
