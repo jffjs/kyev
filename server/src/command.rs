@@ -158,3 +158,17 @@ impl fmt::Display for ParseCommandError {
         }
     }
 }
+
+fn parse_ping(cmd_str: &str, array: Vec<resp::Value>) -> Result<Command, ParseCommandError> {
+    expect_max_args(cmd_str, &array, 1)?;
+    let args = match array.iter().skip(1).next() {
+        Some(value) => {
+            let arg = value.to_string().map_err(|_| {
+                ParseCommandError::new(ParseCommandErrorKind::InvalidArgs, Some(cmd_str))
+            })?;
+            vec![arg]
+        }
+        None => vec![],
+    };
+    Ok(Command::new(Action::Ping, args))
+}
