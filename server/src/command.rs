@@ -8,18 +8,29 @@ pub enum Action {
 }
 
 impl Action {
-    pub fn from_str(s: &str) -> Result<Action, ParseCommandError> {
-        let s = s.to_uppercase();
+    pub fn parse(s: &String) -> Result<Action, ParseCommandError> {
+        let s = s.to_lowercase();
         let s = s.as_str();
-        if s == "PING" {
+        if s == "ping" {
             Ok(Action::Ping)
-        } else if s == "ECHO" {
+        } else if s == "echo" {
             Ok(Action::Echo)
         } else {
-            Err(ParseCommandError::new(
+            Err(ParseCommandError::new_with_context(
                 ParseCommandErrorKind::UnknownCommand,
-                Some(s),
+                None,
+                s.to_owned(),
             ))
+        }
+    }
+}
+
+impl fmt::Display for Action {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        use Action::*;
+        match self {
+            Ping => "ping".fmt(f),
+            Echo => "echo".fmt(f),
         }
     }
 }
@@ -40,37 +51,13 @@ impl Command {
 
         match resp_value {
             resp::Value::Array(array) => {
-                let mut iter = array.iter();
-                let action_resp = iter.next().ok_or(ParseCommandError::new(IsEmpty, None))?;
+                let action_resp = array.first().ok_or(ParseCommandError::new(IsEmpty, None))?;
                 match action_resp {
                     resp::Value::BulkString(cmd) => {
-                        let cmd_str = cmd.as_str();
-                        let action = Action::from_str(cmd_str)?;
+                        let action = Action::parse(cmd)?;
                         match action {
-                            Action::Ping => {
-                                expect_max_args(cmd_str, &array, 1)?;
-                                let args = match iter.next() {
-                                    Some(value) => {
-                                        let arg = value.to_string().map_err(|_| {
-                                            ParseCommandError::new(InvalidArgs, Some(cmd_str))
-                                        })?;
-                                        vec![arg]
-                                    }
-                                    None => vec![],
-                                };
-                                Ok(Command::new(action, args))
-                            }
-                            Action::Echo => {
-                                expect_max_args(cmd_str, &array, 1)?;
-                                let arg = iter
-                                    .next()
-                                    .ok_or(ParseCommandError::new(WrongNumberArgs, Some(cmd_str)))?
-                                    .to_string()
-                                    .map_err(|_| {
-                                        ParseCommandError::new(InvalidArgs, Some(cmd_str))
-                                    })?;
-                                Ok(Command::new(Action::Echo, vec![arg]))
-                            }
+                            Action::Ping => parse_ping(&array),
+                            Action::Echo => parse_echo(&array),
                         }
                     }
                     _ => Err(ParseCommandError::new(InvalidCommand, None)),
@@ -89,25 +76,11 @@ impl Command {
     }
 }
 
-fn expect_max_args(
-    cmd_str: &str,
-    v: &Vec<resp::Value>,
-    max: usize,
-) -> Result<(), ParseCommandError> {
-    if v.len() > max + 1 {
-        Err(ParseCommandError::new(
-            ParseCommandErrorKind::WrongNumberArgs,
-            Some(cmd_str),
-        ))
-    } else {
-        Ok(())
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParseCommandError {
     kind: ParseCommandErrorKind,
-    command: Option<String>,
+    action: Option<Action>,
+    other_context: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -121,10 +94,23 @@ pub enum ParseCommandErrorKind {
 }
 
 impl ParseCommandError {
-    pub fn new(kind: ParseCommandErrorKind, command: Option<&str>) -> ParseCommandError {
+    pub fn new(kind: ParseCommandErrorKind, action: Option<Action>) -> ParseCommandError {
         ParseCommandError {
             kind,
-            command: command.map(|c| c.to_owned()),
+            action,
+            other_context: None,
+        }
+    }
+
+    pub fn new_with_context(
+        kind: ParseCommandErrorKind,
+        action: Option<Action>,
+        other_context: String,
+    ) -> ParseCommandError {
+        ParseCommandError {
+            kind,
+            action,
+            other_context: Some(other_context),
         }
     }
 
@@ -132,8 +118,8 @@ impl ParseCommandError {
         &self.kind
     }
 
-    pub fn command(&self) -> &Option<String> {
-        &self.command
+    pub fn action(&self) -> &Option<Action> {
+        &self.action
     }
 }
 
@@ -141,34 +127,117 @@ impl fmt::Display for ParseCommandError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         use self::ParseCommandErrorKind::*;
 
-        let empty_string = &String::default();
-        let command = self
-            .command()
-            .as_ref()
-            .unwrap_or(empty_string)
-            .to_lowercase();
-
         match &self.kind {
             MustBeArray => "ERR must be an array".fmt(f),
             IsEmpty => "ERR array must contain at least one value".fmt(f),
-            UnknownCommand => write!(f, "ERR Unknown or disabled command '{}'", command),
+            UnknownCommand => write!(
+                f,
+                "ERR Unknown or disabled command '{}'",
+                self.other_context.as_ref().unwrap()
+            ),
             InvalidArgs => "ERR invalid arguments for command".fmt(f),
             InvalidCommand => "ERR command values must be Bulk Strings".fmt(f),
-            WrongNumberArgs => write!(f, "ERR wrong number of arguments for '{}' command", command),
+            WrongNumberArgs => write!(
+                f,
+                "ERR wrong number of arguments for '{}' command",
+                self.action.as_ref().unwrap()
+            ),
         }
     }
 }
 
-fn parse_ping(cmd_str: &str, array: Vec<resp::Value>) -> Result<Command, ParseCommandError> {
-    expect_max_args(cmd_str, &array, 1)?;
+fn expect_max_args(
+    action: Action,
+    v: &Vec<resp::Value>,
+    max: usize,
+) -> Result<(), ParseCommandError> {
+    if v.len() > max + 1 {
+        Err(ParseCommandError::new(
+            ParseCommandErrorKind::WrongNumberArgs,
+            Some(action),
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+fn parse_ping(array: &Vec<resp::Value>) -> Result<Command, ParseCommandError> {
+    expect_max_args(Action::Ping, &array, 1)?;
     let args = match array.iter().skip(1).next() {
         Some(value) => {
             let arg = value.to_string().map_err(|_| {
-                ParseCommandError::new(ParseCommandErrorKind::InvalidArgs, Some(cmd_str))
+                ParseCommandError::new(ParseCommandErrorKind::InvalidArgs, Some(Action::Ping))
             })?;
             vec![arg]
         }
         None => vec![],
     };
     Ok(Command::new(Action::Ping, args))
+}
+
+fn parse_echo(array: &Vec<resp::Value>) -> Result<Command, ParseCommandError> {
+    use ParseCommandErrorKind::*;
+    expect_max_args(Action::Echo, &array, 1)?;
+    let arg = array
+        .iter()
+        .skip(1)
+        .next()
+        .ok_or(ParseCommandError::new(WrongNumberArgs, Some(Action::Echo)))?
+        .to_string()
+        .map_err(|_| ParseCommandError::new(InvalidArgs, Some(Action::Echo)))?;
+    Ok(Command::new(Action::Echo, vec![arg]))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_ping() {
+        assert_eq!(
+            Ok(Command::new(Action::Ping, vec![])),
+            parse_ping(&vec![resp::bulk_string("PING")])
+        );
+        assert_eq!(
+            Ok(Command::new(Action::Ping, vec!["hello".to_owned()])),
+            parse_ping(&vec![resp::bulk_string("PING"), resp::bulk_string("hello")])
+        );
+        assert_eq!(
+            Err(ParseCommandError::new(
+                ParseCommandErrorKind::WrongNumberArgs,
+                Some(Action::Ping)
+            )),
+            parse_ping(&vec![
+                resp::bulk_string("PING"),
+                resp::bulk_string("foo"),
+                resp::bulk_string("bar")
+            ])
+        );
+    }
+
+    #[test]
+    fn test_parse_echo() {
+        assert_eq!(
+            Err(ParseCommandError::new(
+                ParseCommandErrorKind::WrongNumberArgs,
+                Some(Action::Echo)
+            )),
+            parse_echo(&vec![resp::bulk_string("ECHO")])
+        );
+        assert_eq!(
+            Ok(Command::new(Action::Echo, vec!["hello".to_owned()])),
+            parse_echo(&vec![resp::bulk_string("ECHO"), resp::bulk_string("hello")])
+        );
+        assert_eq!(
+            Err(ParseCommandError::new(
+                ParseCommandErrorKind::WrongNumberArgs,
+                Some(Action::Echo)
+            )),
+            parse_echo(&vec![
+                resp::bulk_string("ECHO"),
+                resp::bulk_string("foo"),
+                resp::bulk_string("bar")
+            ])
+        );
+    }
 }
