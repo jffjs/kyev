@@ -97,6 +97,10 @@ impl Command {
     pub fn args(&self) -> &Vec<String> {
         &self.args
     }
+
+    pub fn drain_args(&mut self) -> std::vec::Drain<String> {
+        self.args.drain(..)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

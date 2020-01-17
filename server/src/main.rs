@@ -22,7 +22,7 @@ async fn execute_cmd(store_lock: StoreLock, resp_val: resp::Value) -> String {
     use kyev::command::Action::*;
 
     match Command::from_resp(resp_val) {
-        Ok(cmd) => match cmd.action() {
+        Ok(mut cmd) => match cmd.action() {
             Ping => resp::encode(
                 &(if let Some(arg) = cmd.args().first() {
                     resp::bulk_string(&arg)
@@ -35,10 +35,10 @@ async fn execute_cmd(store_lock: StoreLock, resp_val: resp::Value) -> String {
             )),
             Set => {
                 let mut store = store_lock.write().await;
-                let mut args_iter = cmd.args().iter();
-                let key = args_iter.next().unwrap();
-                let val = args_iter.next().unwrap();
-                store.set(key.clone(), val.clone());
+                let mut drain = cmd.drain_args();
+                let key = drain.next().unwrap();
+                let val = drain.next().unwrap();
+                store.set(key, val);
                 resp::encode(&resp::simple_string("OK"))
             }
             Get => {
