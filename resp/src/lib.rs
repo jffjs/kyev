@@ -218,39 +218,9 @@ fn read_int_with_clrf(buf_reader: &mut BufReader<&[u8]>) -> Result<usize, Error>
     }
 }
 
-#[macro_export]
-macro_rules! resp {
-    ($( $x:expr ),* ) => {
-        {
-            let mut temp_vec = Vec::new();
-            $(
-                temp_vec.push(bulk_string($x));
-            )*
-            array(temp_vec)
-        }
-    };
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_resp_macro() {
-        assert_eq!(
-            array(vec![
-                bulk_string("ping"),
-                bulk_string("foo"),
-                bulk_string("bar")
-            ]),
-            resp!["ping", "foo", "bar"]
-        );
-
-        assert_eq!(
-            "*2\r\n$4\r\nECHO\r\n$3\r\nhey\r\n".to_owned(),
-            encode(&resp!["ECHO", "hey"]),
-        );
-    }
 
     #[test]
     fn test_encode_simple_string() {

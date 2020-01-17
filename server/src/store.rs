@@ -29,6 +29,10 @@ impl Store {
 
         Some(())
     }
+
+    pub fn get(&self, key: &String) -> Option<&Value> {
+        self.data.get(key)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
