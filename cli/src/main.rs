@@ -66,6 +66,11 @@ fn main() -> Result<()> {
                         output.clear();
                         break;
                     }
+                    resp::Value::Null => {
+                        println!("(nil)");
+                        output.clear();
+                        break;
+                    }
                     _ => unimplemented!(),
                 },
                 Err(resp::Error::IncompleteRespError) => continue,

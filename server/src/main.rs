@@ -50,7 +50,7 @@ async fn execute_cmd(store_lock: StoreLock, resp_val: resp::Value) -> String {
                         store::Value::Int(i) => resp::bulk_string(i.to_string().as_str()),
                         store::Value::Str(s) => resp::bulk_string(s.as_str()),
                     },
-                    None => unimplemented!(),
+                    None => resp::Value::Null,
                 })
             }
         },

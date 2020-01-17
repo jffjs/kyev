@@ -35,6 +35,7 @@ pub enum Value {
     BulkString(String),
     Error(String),
     Integer(i64),
+    Null,
 }
 
 impl Value {
@@ -73,6 +74,7 @@ pub fn encode(value: &Value) -> String {
         Value::Array(_) => encode_array(value),
         Value::Error(_) => encode_error(value),
         Value::Integer(_) => encode_integer(value),
+        Value::Null => "$-1\r\n".to_owned(),
     }
 }
 
@@ -165,21 +167,25 @@ fn decode_error(buf_reader: &mut BufReader<&[u8]>) -> Result<Value, Error> {
 fn decode_bulk_string(buf_reader: &mut BufReader<&[u8]>) -> Result<Value, Error> {
     let byte_count = read_int_with_clrf(buf_reader)?;
 
-    let mut buf = vec![0; byte_count];
-    buf_reader.read_exact(&mut buf)?;
-    let string = std::str::from_utf8(&buf)?;
-    if string.len() != byte_count {
-        return Err(Error::IncompleteRespError);
-    }
+    if byte_count > 0 {
+        let byte_count = byte_count as usize;
+        let mut buf = vec![0; byte_count];
+        buf_reader.read_exact(&mut buf)?;
+        let string = std::str::from_utf8(&buf)?;
+        if string.len() != byte_count {
+            return Err(Error::IncompleteRespError);
+        }
 
-    let mut buf = vec![0; DELIMITER.len()];
-    buf_reader.read_exact(&mut buf)?;
-    let closing_delimiter = std::str::from_utf8(&buf)?;
-    if closing_delimiter != DELIMITER {
-        return Err(Error::IncompleteRespError);
+        let mut buf = vec![0; DELIMITER.len()];
+        buf_reader.read_exact(&mut buf)?;
+        let closing_delimiter = std::str::from_utf8(&buf)?;
+        if closing_delimiter != DELIMITER {
+            return Err(Error::IncompleteRespError);
+        }
+        Ok(Value::BulkString(string.to_owned()))
+    } else {
+        Ok(Value::Null)
     }
-
-    Ok(Value::BulkString(string.to_owned()))
 }
 
 fn decode_integer(buf_reader: &mut BufReader<&[u8]>) -> Result<Value, Error> {
@@ -196,7 +202,7 @@ fn decode_integer(buf_reader: &mut BufReader<&[u8]>) -> Result<Value, Error> {
 fn decode_array(buf_reader: &mut BufReader<&[u8]>) -> Result<Value, Error> {
     let element_count = read_int_with_clrf(buf_reader)?;
 
-    let mut resp_array = Vec::with_capacity(element_count);
+    let mut resp_array = Vec::with_capacity(element_count as usize);
 
     for _ in 0..element_count {
         let value = do_decode(buf_reader)?;
@@ -206,12 +212,12 @@ fn decode_array(buf_reader: &mut BufReader<&[u8]>) -> Result<Value, Error> {
     Ok(Value::Array(resp_array))
 }
 
-fn read_int_with_clrf(buf_reader: &mut BufReader<&[u8]>) -> Result<usize, Error> {
+fn read_int_with_clrf(buf_reader: &mut BufReader<&[u8]>) -> Result<isize, Error> {
     let mut int_with_clrf = String::new();
     buf_reader.read_line(&mut int_with_clrf)?;
 
     if int_with_clrf.ends_with(DELIMITER) {
-        let int = int_with_clrf.trim_end().parse::<usize>()?;
+        let int = int_with_clrf.trim_end().parse::<isize>()?;
         Ok(int)
     } else {
         Err(Error::IncompleteRespError)
@@ -362,5 +368,11 @@ mod tests {
         assert_eq!(Ok(Value::Integer(10)), decode(":10\r\n"));
         assert_eq!(Err(Error::IncompleteRespError), decode(":10"));
         assert_eq!(Err(Error::InvalidRespError), decode(":foo\r\n"));
+    }
+
+    #[test]
+    fn test_null() {
+        assert_eq!(Ok(Value::Null), decode("$-1\r\n"));
+        assert_eq!("$-1\r\n".to_owned(), encode(&Value::Null));
     }
 }
