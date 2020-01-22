@@ -10,7 +10,7 @@ use async_std::{
 extern crate lazy_static;
 
 use kyev::command::Command;
-use kyev::store::{self, Expiration, Store};
+use kyev::store::{self, Expiration, Store, TTL};
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
@@ -66,11 +66,23 @@ async fn execute_cmd(resp_val: resp::Value) -> String {
                 let ttl = drain.next().unwrap().parse::<i64>().unwrap();
                 let join_handle = task::spawn(create_expiration_task(ttl as u64, key.clone()));
                 let mut store = STORE.write().await;
-                store.expire(
+                if let Some(_) = store.expire(
                     &key,
                     Expiration::new(time::Duration::seconds(ttl), join_handle),
-                );
-                resp::encode(&resp::integer(1))
+                ) {
+                    resp::encode(&resp::integer(1))
+                } else {
+                    resp::encode(&resp::integer(0))
+                }
+            }
+            Ttl => {
+                let store = STORE.read().await;
+                let key = cmd.args().first().unwrap();
+                resp::encode(&resp::integer(match store.ttl(key) {
+                    TTL::Expires(ttl) => ttl,
+                    TTL::NoExpiration => -1,
+                    TTL::KeyNotFound => -2,
+                }))
             }
         },
         Err(e) => {

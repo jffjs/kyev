@@ -21,6 +21,7 @@ pub enum Action {
     Set,
     Get,
     Expire,
+    Ttl,
 }
 
 impl Action {
@@ -37,6 +38,8 @@ impl Action {
             Ok(Action::Get)
         } else if s == "expire" {
             Ok(Action::Expire)
+        } else if s == "ttl" {
+            Ok(Action::Ttl)
         } else {
             Err(ParseCommandError::new_with_context(
                 ParseCommandErrorKind::UnknownCommand,
@@ -56,6 +59,7 @@ impl fmt::Display for Action {
             Set => "set".fmt(f),
             Get => "get".fmt(f),
             Expire => "expire".fmt(f),
+            Ttl => "ttl".fmt(f),
         }
     }
 }
@@ -86,6 +90,7 @@ impl Command {
                             Action::Set => parse_set(&array),
                             Action::Get => parse_get(&array),
                             Action::Expire => parse_expire(&array),
+                            Action::Ttl => parse_ttl(&array),
                         }
                     }
                     _ => Err(ParseCommandError::new(InvalidCommand, None)),
@@ -246,6 +251,12 @@ fn parse_expire(array: &Vec<resp::Value>) -> Result<Command, ParseCommandError> 
     Ok(Command::new(Action::Expire, vec![key, ttl]))
 }
 
+fn parse_ttl(array: &Vec<resp::Value>) -> Result<Command, ParseCommandError> {
+    expect_max_args(Action::Ttl, &array, 1)?;
+    let key = next_arg(array.iter().skip(1), Action::Ttl)?;
+    Ok(Command::new(Action::Ttl, vec![key]))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -318,6 +329,14 @@ mod tests {
                 vec!["foo".to_owned(), "5".to_owned()]
             )),
             parse_expire(&cmd!["EXPIRE", "foo", "5"])
+        );
+    }
+
+    #[test]
+    fn test_parse_ttl() {
+        assert_eq!(
+            Ok(Command::new(Action::Ttl, vec!["foo".to_owned()])),
+            parse_ttl(&cmd!["TTL", "foo"])
         );
     }
 }

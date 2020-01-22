@@ -45,6 +45,15 @@ impl Entry {
             let _handle_to_drop = exp.handle;
         }
     }
+
+    fn ttl(&self) -> Option<i64> {
+        if let Some(exp) = &self.expiration {
+            let ttl = exp.expires_at - PrimitiveDateTime::now();
+            Some(ttl.whole_seconds())
+        } else {
+            None
+        }
+    }
 }
 
 pub struct Store {
@@ -88,23 +97,23 @@ impl Store {
         }
     }
 
-    // fn set_expiration(&mut self, key: &String, duration: Duration) -> Option<()> {
-    //     if let Some(entry) = self.data.get_mut(key) {
-    //         let timer = task::sleep(duration.try_into().unwrap());
-    //         let expiration = Expiration {
-    //             expires_at: PrimitiveDateTime::now() + duration,
-    //             handle: task::spawn(async {
-    //                 timer.await;
-    //                 // self.data.remove(key);
-    //                 println!("Task has finished!!");
-    //             }),
-    //         };
-    //         entry.expiration = Some(expiration);
-    //         Some(())
-    //     } else {
-    //         None
-    //     }
-    // }
+    pub fn ttl(&self, key: &String) -> TTL {
+        if let Some(entry) = self.data.get(key) {
+            if let Some(ttl) = entry.ttl() {
+                TTL::Expires(ttl)
+            } else {
+                TTL::NoExpiration
+            }
+        } else {
+            TTL::KeyNotFound
+        }
+    }
+}
+
+pub enum TTL {
+    NoExpiration,
+    KeyNotFound,
+    Expires(i64),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
