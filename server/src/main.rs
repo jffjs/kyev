@@ -48,7 +48,6 @@ async fn execute_cmd(resp_val: resp::Value) -> String {
                 resp::encode(&resp::simple_string("OK"))
             }
             Get => {
-                // let store = store_lock.read().await;
                 let store = STORE.read().await;
                 let key = cmd.args().first().unwrap();
                 let val = store.get(key);
@@ -64,15 +63,23 @@ async fn execute_cmd(resp_val: resp::Value) -> String {
                 let mut drain = cmd.drain_args();
                 let key = drain.next().unwrap();
                 let ttl = drain.next().unwrap().parse::<i64>().unwrap();
-                let join_handle = task::spawn(create_expiration_task(ttl as u64, key.clone()));
+
                 let mut store = STORE.write().await;
-                if let Some(_) = store.expire(
-                    &key,
-                    Expiration::new(time::Duration::seconds(ttl), join_handle),
-                ) {
-                    resp::encode(&resp::integer(1))
+                if ttl < 0 {
+                    resp::encode(&resp::integer(match store.remove(&key) {
+                        Some(_) => 1,
+                        None => 0,
+                    }))
                 } else {
-                    resp::encode(&resp::integer(0))
+                    let join_handle = task::spawn(create_expiration_task(ttl as u64, key.clone()));
+                    if let Some(_) = store.expire(
+                        &key,
+                        Expiration::new(time::Duration::seconds(ttl), join_handle),
+                    ) {
+                        resp::encode(&resp::integer(1))
+                    } else {
+                        resp::encode(&resp::integer(0))
+                    }
                 }
             }
             Ttl => {
@@ -96,6 +103,11 @@ async fn create_expiration_task(ttl: u64, key: String) {
     let timer = task::sleep(std::time::Duration::from_secs(ttl));
     timer.await;
     let mut store = STORE.write().await;
+    if let TTL::Expires(ttl) = store.ttl(&key) {
+        if ttl > 0 {
+            return;
+        }
+    }
     store.remove(&key);
 }
 

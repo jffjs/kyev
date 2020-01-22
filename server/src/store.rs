@@ -40,12 +40,6 @@ impl Entry {
         self.expiration = Some(expiration);
     }
 
-    fn cancel_expiration(&mut self) {
-        if let Some(exp) = self.expiration.take() {
-            let _handle_to_drop = exp.handle;
-        }
-    }
-
     fn ttl(&self) -> Option<i64> {
         if let Some(exp) = &self.expiration {
             let ttl = exp.expires_at - PrimitiveDateTime::now();
