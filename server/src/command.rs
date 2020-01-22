@@ -19,6 +19,7 @@ pub enum Action {
     Ping,
     Echo,
     Set,
+    SetEx,
     Get,
     Expire,
     Ttl,
@@ -34,6 +35,8 @@ impl Action {
             Ok(Action::Echo)
         } else if s == "set" {
             Ok(Action::Set)
+        } else if s == "setex" {
+            Ok(Action::SetEx)
         } else if s == "get" {
             Ok(Action::Get)
         } else if s == "expire" {
@@ -57,6 +60,7 @@ impl fmt::Display for Action {
             Ping => "ping".fmt(f),
             Echo => "echo".fmt(f),
             Set => "set".fmt(f),
+            SetEx => "setex".fmt(f),
             Get => "get".fmt(f),
             Expire => "expire".fmt(f),
             Ttl => "ttl".fmt(f),
@@ -88,6 +92,7 @@ impl Command {
                             Action::Ping => parse_ping(&array),
                             Action::Echo => parse_echo(&array),
                             Action::Set => parse_set(&array),
+                            Action::SetEx => parse_setex(&array),
                             Action::Get => parse_get(&array),
                             Action::Expire => parse_expire(&array),
                             Action::Ttl => parse_ttl(&array),
@@ -234,6 +239,20 @@ fn parse_set(array: &Vec<resp::Value>) -> Result<Command, ParseCommandError> {
     Ok(Command::new(Action::Set, vec![key, val]))
 }
 
+fn parse_setex(array: &Vec<resp::Value>) -> Result<Command, ParseCommandError> {
+    let action = Action::SetEx;
+    expect_max_args(action, &array, 3)?;
+    let mut iter = array.iter().skip(1);
+    Ok(Command::new(
+        action,
+        vec![
+            next_arg(&mut iter, action)?,
+            next_arg(&mut iter, action)?,
+            next_arg(&mut iter, action)?,
+        ],
+    ))
+}
+
 fn parse_get(array: &Vec<resp::Value>) -> Result<Command, ParseCommandError> {
     expect_max_args(Action::Echo, &array, 1)?;
     let mut iter = array.iter().skip(1);
@@ -337,6 +356,17 @@ mod tests {
         assert_eq!(
             Ok(Command::new(Action::Ttl, vec!["foo".to_owned()])),
             parse_ttl(&cmd!["TTL", "foo"])
+        );
+    }
+
+    #[test]
+    fn test_setex() {
+        assert_eq!(
+            Ok(Command::new(
+                Action::SetEx,
+                vec!["foo".to_owned(), "10".to_owned(), "bar".to_owned()]
+            )),
+            parse_setex(&cmd!["SETEX", "foo", "10", "bar"])
         );
     }
 }

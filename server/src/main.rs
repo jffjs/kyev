@@ -47,6 +47,7 @@ async fn execute_cmd(resp_val: resp::Value) -> String {
                 store.set(key, val);
                 resp::encode(&resp::simple_string("OK"))
             }
+            SetEx => unimplemented!(),
             Get => {
                 let store = STORE.read().await;
                 let key = cmd.args().first().unwrap();
