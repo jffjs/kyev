@@ -55,24 +55,25 @@ fn main() -> Result<()> {
             }
 
             match resp::decode(&output) {
-                Ok(value) => match value {
-                    resp::Value::SimpleString(s) | resp::Value::BulkString(s) => {
-                        println!("\"{}\"", s);
-                        output.clear();
-                        break;
+                Ok(value) => {
+                    match value {
+                        resp::Value::SimpleString(s) | resp::Value::BulkString(s) => {
+                            println!("\"{}\"", s);
+                        }
+                        resp::Value::Error(e) => {
+                            println!("{}", e);
+                        }
+                        resp::Value::Null => {
+                            println!("(nil)");
+                        }
+                        resp::Value::Integer(i) => {
+                            println!("(integer) {}", i);
+                        }
+                        _ => unimplemented!(),
                     }
-                    resp::Value::Error(e) => {
-                        println!("{}", e);
-                        output.clear();
-                        break;
-                    }
-                    resp::Value::Null => {
-                        println!("(nil)");
-                        output.clear();
-                        break;
-                    }
-                    _ => unimplemented!(),
-                },
+                    output.clear();
+                    break;
+                }
                 Err(resp::Error::IncompleteRespError) => continue,
                 _ => {
                     println!("ERR invalid response");

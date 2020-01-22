@@ -6,11 +6,17 @@ use async_std::{
     task,
 };
 
+#[macro_use]
+extern crate lazy_static;
+
 use kyev::command::Command;
-use kyev::store::{self, Store};
+use kyev::store::{self, Expiration, Store};
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
-type StoreLock = Arc<RwLock<Store>>;
+
+lazy_static! {
+    static ref STORE: RwLock<Store> = RwLock::new(Store::new());
+}
 
 fn main() -> Result<()> {
     let fut = accept_loop("127.0.0.1:8080");
@@ -18,7 +24,7 @@ fn main() -> Result<()> {
     task::block_on(fut)
 }
 
-async fn execute_cmd(store_lock: StoreLock, resp_val: resp::Value) -> String {
+async fn execute_cmd(resp_val: resp::Value) -> String {
     use kyev::command::Action::*;
 
     match Command::from_resp(resp_val) {
@@ -34,7 +40,7 @@ async fn execute_cmd(store_lock: StoreLock, resp_val: resp::Value) -> String {
                 &cmd.args().first().unwrap_or(&String::new()),
             )),
             Set => {
-                let mut store = store_lock.write().await;
+                let mut store = STORE.write().await;
                 let mut drain = cmd.drain_args();
                 let key = drain.next().unwrap();
                 let val = drain.next().unwrap();
@@ -42,7 +48,8 @@ async fn execute_cmd(store_lock: StoreLock, resp_val: resp::Value) -> String {
                 resp::encode(&resp::simple_string("OK"))
             }
             Get => {
-                let store = store_lock.read().await;
+                // let store = store_lock.read().await;
+                let store = STORE.read().await;
                 let key = cmd.args().first().unwrap();
                 let val = store.get(key);
                 resp::encode(&match val {
@@ -53,6 +60,18 @@ async fn execute_cmd(store_lock: StoreLock, resp_val: resp::Value) -> String {
                     None => resp::Value::Null,
                 })
             }
+            Expire => {
+                let mut drain = cmd.drain_args();
+                let key = drain.next().unwrap();
+                let ttl = drain.next().unwrap().parse::<i64>().unwrap();
+                let join_handle = task::spawn(create_expiration_task(ttl as u64, key.clone()));
+                let mut store = STORE.write().await;
+                store.expire(
+                    &key,
+                    Expiration::new(time::Duration::seconds(ttl), join_handle),
+                );
+                resp::encode(&resp::integer(1))
+            }
         },
         Err(e) => {
             let msg = format!("{}", e);
@@ -61,25 +80,26 @@ async fn execute_cmd(store_lock: StoreLock, resp_val: resp::Value) -> String {
     }
 }
 
-async fn accept_loop(addr: impl ToSocketAddrs) -> Result<()> {
-    let store = Arc::new(RwLock::new(Store::new()));
+async fn create_expiration_task(ttl: u64, key: String) {
+    let timer = task::sleep(std::time::Duration::from_secs(ttl));
+    timer.await;
+    let mut store = STORE.write().await;
+    store.remove(&key);
+}
 
+async fn accept_loop(addr: impl ToSocketAddrs) -> Result<()> {
     let listener = TcpListener::bind(addr).await?;
     let mut incoming = listener.incoming();
     while let Some(stream) = incoming.next().await {
         let stream = stream?;
         let client_addr = stream.peer_addr()?;
         println!("Accepting from: {}", client_addr);
-        let _handle = spawn_and_log_error(connection_loop(store.clone(), client_addr, stream));
+        let _handle = spawn_and_log_error(connection_loop(client_addr, stream));
     }
     Ok(())
 }
 
-async fn connection_loop(
-    store_lock: StoreLock,
-    client_addr: SocketAddr,
-    stream: TcpStream,
-) -> Result<()> {
+async fn connection_loop(client_addr: SocketAddr, stream: TcpStream) -> Result<()> {
     let stream = Arc::new(stream);
     let mut reader = BufReader::new(&*stream);
     let mut string_buf = String::new();
@@ -91,7 +111,7 @@ async fn connection_loop(
 
         match resp::decode(&string_buf) {
             Ok(value) => {
-                let response = execute_cmd(store_lock.clone(), value).await;
+                let response = execute_cmd(value).await;
                 let mut stream = &*stream;
                 stream.write_all(response.as_bytes()).await?;
                 string_buf.clear();

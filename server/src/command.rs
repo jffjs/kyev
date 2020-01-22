@@ -20,6 +20,7 @@ pub enum Action {
     Echo,
     Set,
     Get,
+    Expire,
 }
 
 impl Action {
@@ -34,6 +35,8 @@ impl Action {
             Ok(Action::Set)
         } else if s == "get" {
             Ok(Action::Get)
+        } else if s == "expire" {
+            Ok(Action::Expire)
         } else {
             Err(ParseCommandError::new_with_context(
                 ParseCommandErrorKind::UnknownCommand,
@@ -52,6 +55,7 @@ impl fmt::Display for Action {
             Echo => "echo".fmt(f),
             Set => "set".fmt(f),
             Get => "get".fmt(f),
+            Expire => "expire".fmt(f),
         }
     }
 }
@@ -81,6 +85,7 @@ impl Command {
                             Action::Echo => parse_echo(&array),
                             Action::Set => parse_set(&array),
                             Action::Get => parse_get(&array),
+                            Action::Expire => parse_expire(&array),
                         }
                     }
                     _ => Err(ParseCommandError::new(InvalidCommand, None)),
@@ -232,6 +237,15 @@ fn parse_get(array: &Vec<resp::Value>) -> Result<Command, ParseCommandError> {
     Ok(Command::new(Action::Get, vec![key]))
 }
 
+fn parse_expire(array: &Vec<resp::Value>) -> Result<Command, ParseCommandError> {
+    expect_max_args(Action::Expire, &array, 2)?;
+    let mut iter = array.iter().skip(1);
+    let key = next_arg(&mut iter, Action::Expire)?;
+    let ttl = next_arg(&mut iter, Action::Expire)?;
+
+    Ok(Command::new(Action::Expire, vec![key, ttl]))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -289,10 +303,21 @@ mod tests {
     }
 
     #[test]
-    fn name() {
+    fn test_parse_get() {
         assert_eq!(
             Ok(Command::new(Action::Get, vec!["foo".to_owned()])),
             parse_get(&cmd!["GET", "foo"])
+        );
+    }
+
+    #[test]
+    fn test_parse_expire() {
+        assert_eq!(
+            Ok(Command::new(
+                Action::Expire,
+                vec!["foo".to_owned(), "5".to_owned()]
+            )),
+            parse_expire(&cmd!["EXPIRE", "foo", "5"])
         );
     }
 }
