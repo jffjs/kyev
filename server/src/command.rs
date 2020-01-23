@@ -23,6 +23,8 @@ pub enum Action {
     Get,
     Expire,
     Ttl,
+    Multi,
+    Exec,
 }
 
 impl Action {
@@ -43,6 +45,10 @@ impl Action {
             Ok(Action::Expire)
         } else if s == "ttl" {
             Ok(Action::Ttl)
+        } else if s == "multi" {
+            Ok(Action::Multi)
+        } else if s == "exec" {
+            Ok(Action::Exec)
         } else {
             Err(ParseCommandError::new_with_context(
                 ParseCommandErrorKind::UnknownCommand,
@@ -64,6 +70,8 @@ impl fmt::Display for Action {
             Get => "get".fmt(f),
             Expire => "expire".fmt(f),
             Ttl => "ttl".fmt(f),
+            Multi => "multi".fmt(f),
+            Exec => "exec".fmt(f),
         }
     }
 }
@@ -81,6 +89,7 @@ impl Command {
 
     pub fn from_resp(resp_value: resp::Value) -> Result<Command, ParseCommandError> {
         use self::ParseCommandErrorKind::*;
+        use Action::*;
 
         match resp_value {
             resp::Value::Array(array) => {
@@ -89,13 +98,15 @@ impl Command {
                     resp::Value::BulkString(cmd) => {
                         let action = Action::parse(cmd)?;
                         match action {
-                            Action::Ping => parse_ping(&array),
-                            Action::Echo => parse_echo(&array),
-                            Action::Set => parse_set(&array),
-                            Action::SetEx => parse_setex(&array),
-                            Action::Get => parse_get(&array),
-                            Action::Expire => parse_expire(&array),
-                            Action::Ttl => parse_ttl(&array),
+                            Ping => parse_ping(&array),
+                            Echo => parse_echo(&array),
+                            Set => parse_set(&array),
+                            SetEx => parse_setex(&array),
+                            Get => parse_get(&array),
+                            Expire => parse_expire(&array),
+                            Ttl => parse_ttl(&array),
+                            Multi => parse_multi(&array),
+                            Exec => parse_exec(&array),
                         }
                     }
                     _ => Err(ParseCommandError::new(InvalidCommand, None)),
@@ -274,6 +285,16 @@ fn parse_ttl(array: &Vec<resp::Value>) -> Result<Command, ParseCommandError> {
     expect_max_args(Action::Ttl, &array, 1)?;
     let key = next_arg(array.iter().skip(1), Action::Ttl)?;
     Ok(Command::new(Action::Ttl, vec![key]))
+}
+
+fn parse_multi(array: &Vec<resp::Value>) -> Result<Command, ParseCommandError> {
+    expect_max_args(Action::Multi, &array, 0)?;
+    Ok(Command::new(Action::Multi, vec![]))
+}
+
+fn parse_exec(array: &Vec<resp::Value>) -> Result<Command, ParseCommandError> {
+    expect_max_args(Action::Exec, &array, 0)?;
+    Ok(Command::new(Action::Exec, vec![]))
 }
 
 #[cfg(test)]

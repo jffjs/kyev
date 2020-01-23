@@ -9,7 +9,7 @@ use async_std::{
 #[macro_use]
 extern crate lazy_static;
 
-use kyev::command::Command;
+use kyev::command::{Action, Command};
 use kyev::store::{self, Expiration, Store, TTL};
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
@@ -36,6 +36,17 @@ async fn accept_loop(addr: impl ToSocketAddrs) -> Result<()> {
     Ok(())
 }
 
+fn spawn_and_log_error<F>(fut: F) -> task::JoinHandle<()>
+where
+    F: Future<Output = Result<()>> + Send + 'static,
+{
+    task::spawn(async move {
+        if let Err(e) = fut.await {
+            eprintln!("{}", e)
+        }
+    })
+}
+
 async fn connection_loop(client_addr: SocketAddr, stream: TcpStream) -> Result<()> {
     let stream = Arc::new(stream);
     let mut reader = BufReader::new(&*stream);
@@ -48,7 +59,17 @@ async fn connection_loop(client_addr: SocketAddr, stream: TcpStream) -> Result<(
 
         match resp::decode(&string_buf) {
             Ok(value) => {
-                let response = execute_cmd(value).await;
+                let response = match Command::from_resp(value) {
+                    Ok(cmd) => match cmd.action() {
+                        Action::Multi => unimplemented!(),
+                        Action::Exec => unimplemented!(),
+                        _ => execute_cmd(cmd).await,
+                    },
+                    Err(e) => {
+                        let msg = format!("{}", e);
+                        resp::encode(&resp::error(msg.as_str()))
+                    }
+                };
                 let mut stream = &*stream;
                 stream.write_all(response.as_bytes()).await?;
                 string_buf.clear();
@@ -67,42 +88,26 @@ async fn connection_loop(client_addr: SocketAddr, stream: TcpStream) -> Result<(
     Ok(())
 }
 
-fn spawn_and_log_error<F>(fut: F) -> task::JoinHandle<()>
-where
-    F: Future<Output = Result<()>> + Send + 'static,
-{
-    task::spawn(async move {
-        if let Err(e) = fut.await {
-            eprintln!("{}", e)
-        }
-    })
-}
-
-async fn execute_cmd(resp_val: resp::Value) -> String {
+async fn execute_cmd(cmd: Command) -> String {
     use kyev::command::Action::*;
 
-    match Command::from_resp(resp_val) {
-        Ok(cmd) => match cmd.action() {
-            Ping => resp::encode(
-                &(if let Some(arg) = cmd.args().first() {
-                    resp::bulk_string(&arg)
-                } else {
-                    resp::simple_string("PONG")
-                }),
-            ),
-            Echo => resp::encode(&resp::bulk_string(
-                &cmd.args().first().unwrap_or(&String::new()),
-            )),
-            Set => execute_set(cmd).await,
-            SetEx => execute_setex(cmd).await,
-            Get => execute_get(cmd).await,
-            Expire => execute_expire(cmd).await,
-            Ttl => execute_ttl(cmd).await,
-        },
-        Err(e) => {
-            let msg = format!("{}", e);
-            resp::encode(&resp::error(msg.as_str()))
-        }
+    match cmd.action() {
+        Multi | Exec => panic!("unreachable"),
+        Ping => resp::encode(
+            &(if let Some(arg) = cmd.args().first() {
+                resp::bulk_string(&arg)
+            } else {
+                resp::simple_string("PONG")
+            }),
+        ),
+        Echo => resp::encode(&resp::bulk_string(
+            &cmd.args().first().unwrap_or(&String::new()),
+        )),
+        Set => execute_set(cmd).await,
+        SetEx => execute_setex(cmd).await,
+        Get => execute_get(cmd).await,
+        Expire => execute_expire(cmd).await,
+        Ttl => execute_ttl(cmd).await,
     }
 }
 
