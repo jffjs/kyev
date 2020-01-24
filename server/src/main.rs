@@ -5,6 +5,7 @@ use async_std::{
     sync::{Arc, RwLock},
     task,
 };
+use time::PrimitiveDateTime;
 
 #[macro_use]
 extern crate lazy_static;
@@ -48,11 +49,14 @@ where
     })
 }
 
+type WatchKey = (String, PrimitiveDateTime);
+
 async fn connection_loop(client_addr: SocketAddr, stream: TcpStream) -> Result<()> {
     let stream = Arc::new(stream);
     let mut reader = BufReader::new(&*stream);
     let mut string_buf = String::new();
     let mut transaction: Option<Transaction> = None;
+    let mut watch: Vec<WatchKey> = Vec::new();
 
     while let Ok(bytes_read) = reader.read_line(&mut string_buf).await {
         if bytes_read == 0 {
@@ -62,7 +66,7 @@ async fn connection_loop(client_addr: SocketAddr, stream: TcpStream) -> Result<(
         match resp::decode(&string_buf) {
             Ok(value) => {
                 let response = match Command::from_resp(value) {
-                    Ok(cmd) => match cmd.action() {
+                    Ok(mut cmd) => match cmd.action() {
                         Action::Multi => {
                             if let None = transaction {
                                 transaction = Some(Transaction::new());
@@ -71,7 +75,9 @@ async fn connection_loop(client_addr: SocketAddr, stream: TcpStream) -> Result<(
                         }
                         Action::Exec => {
                             if let Some(trx) = transaction.take() {
-                                execute_transaction(trx).await
+                                let value = execute_transaction(trx, &watch).await;
+                                watch.clear();
+                                value
                             } else {
                                 resp::Value::Null
                             }
@@ -83,6 +89,20 @@ async fn connection_loop(client_addr: SocketAddr, stream: TcpStream) -> Result<(
                             } else {
                                 resp::Value::Null
                             }
+                        }
+                        Action::Watch => {
+                            for key_to_watch in cmd
+                                .args_mut()
+                                .drain(..)
+                                .map(|key| (key, PrimitiveDateTime::now()))
+                            {
+                                watch.push(key_to_watch);
+                            }
+                            resp::simple_string("OK")
+                        }
+                        Action::Unwatch => {
+                            watch.clear();
+                            resp::simple_string("OK")
                         }
                         _ => {
                             if let Some(mut trx) = transaction.take() {
@@ -130,8 +150,17 @@ async fn connection_loop(client_addr: SocketAddr, stream: TcpStream) -> Result<(
     Ok(())
 }
 
-async fn execute_transaction(mut trx: Transaction) -> resp::Value {
+async fn execute_transaction(mut trx: Transaction, watch: &Vec<WatchKey>) -> resp::Value {
     let mut store = STORE.write().await;
+
+    for (key, watch_start) in watch.iter() {
+        if let Some(last_touched) = store.last_touched(key) {
+            if last_touched >= watch_start {
+                return resp::Value::Null;
+            }
+        }
+    }
+
     let results: Vec<resp::Value> = trx
         .drain_queue()
         .map(move |cmd| {
@@ -152,7 +181,6 @@ async fn execute_transaction(mut trx: Transaction) -> resp::Value {
 fn execute_cmd(cmd: Command) -> resp::Value {
     use kyev::command::Action::*;
     match cmd.action() {
-        Multi | Exec => panic!("unreachable"),
         Ping => {
             if let Some(arg) = cmd.args().first() {
                 resp::bulk_string(&arg)

@@ -26,6 +26,7 @@ impl Expiration {
 struct Entry {
     value: Value,
     expiration: Option<Expiration>,
+    touched_at: PrimitiveDateTime,
 }
 
 impl Entry {
@@ -33,11 +34,13 @@ impl Entry {
         Entry {
             value,
             expiration: None,
+            touched_at: PrimitiveDateTime::now(),
         }
     }
 
     fn set_expiration(&mut self, expiration: Expiration) {
         self.expiration = Some(expiration);
+        self.touched_at = PrimitiveDateTime::now();
     }
 
     fn ttl(&self) -> Option<i64> {
@@ -47,6 +50,10 @@ impl Entry {
         } else {
             None
         }
+    }
+
+    fn touched_at(&self) -> &PrimitiveDateTime {
+        &self.touched_at
     }
 }
 
@@ -101,6 +108,10 @@ impl Store {
         } else {
             TTL::KeyNotFound
         }
+    }
+
+    pub fn last_touched(&self, key: &String) -> Option<&PrimitiveDateTime> {
+        self.data.get(key).map(|entry| entry.touched_at()).or(None)
     }
 }
 

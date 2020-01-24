@@ -26,6 +26,8 @@ pub enum Action {
     Multi,
     Exec,
     Discard,
+    Watch,
+    Unwatch,
 }
 
 impl Action {
@@ -52,6 +54,10 @@ impl Action {
             Ok(Action::Exec)
         } else if s == "discard" {
             Ok(Action::Discard)
+        } else if s == "watch" {
+            Ok(Action::Watch)
+        } else if s == "unwatch" {
+            Ok(Action::Unwatch)
         } else {
             Err(ParseCommandError::new_with_context(
                 ParseCommandErrorKind::UnknownCommand,
@@ -76,6 +82,8 @@ impl fmt::Display for Action {
             Multi => "multi".fmt(f),
             Exec => "exec".fmt(f),
             Discard => "discard".fmt(f),
+            Watch => "watch".fmt(f),
+            Unwatch => "unwatch".fmt(f),
         }
     }
 }
@@ -119,6 +127,8 @@ impl Command {
                             Multi => parse_multi(&array),
                             Exec => parse_exec(&array),
                             Discard => parse_discard(&array),
+                            Watch => parse_watch(&array),
+                            Unwatch => parse_unwatch(&array),
                         }
                     }
                     _ => Err(ParseCommandError::new(InvalidCommand, None)),
@@ -134,6 +144,10 @@ impl Command {
 
     pub fn args(&self) -> &Vec<String> {
         &self.args
+    }
+
+    pub fn args_mut(&mut self) -> &mut Vec<String> {
+        &mut self.args
     }
 
     pub fn lock(&self) -> Option<Lock> {
@@ -330,6 +344,21 @@ fn parse_discard(array: &Vec<resp::Value>) -> Result<Command, ParseCommandError>
     Ok(Command::new(Action::Discard, vec![], None))
 }
 
+fn parse_watch(array: &Vec<resp::Value>) -> Result<Command, ParseCommandError> {
+    let mut keys = vec![];
+    for key in array.iter().skip(1) {
+        keys.push(key.to_string().map_err(|_| {
+            ParseCommandError::new(ParseCommandErrorKind::InvalidArgs, Some(Action::Watch))
+        })?);
+    }
+    Ok(Command::new(Action::Watch, keys, None))
+}
+
+fn parse_unwatch(array: &Vec<resp::Value>) -> Result<Command, ParseCommandError> {
+    expect_max_args(Action::Unwatch, array, 0)?;
+    Ok(Command::new(Action::Unwatch, vec![], None))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -432,6 +461,18 @@ mod tests {
                 Some(Lock::Write)
             )),
             parse_setex(&cmd!["SETEX", "foo", "10", "bar"])
+        );
+    }
+
+    #[test]
+    fn test_watch() {
+        assert_eq!(
+            Ok(Command::new(
+                Action::Watch,
+                vec!["foo".to_owned(), "bar".to_owned(), "mykey".to_owned()],
+                None
+            )),
+            parse_watch(&cmd!["WATCH", "foo", "bar", "mykey"])
         );
     }
 }
