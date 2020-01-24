@@ -76,15 +76,22 @@ impl fmt::Display for Action {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Lock {
+    Read,
+    Write,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Command {
     action: Action,
     args: Vec<String>,
+    lock: Option<Lock>,
 }
 
 impl Command {
-    pub fn new(action: Action, args: Vec<String>) -> Command {
-        Command { action, args }
+    pub fn new(action: Action, args: Vec<String>, lock: Option<Lock>) -> Command {
+        Command { action, args, lock }
     }
 
     pub fn from_resp(resp_value: resp::Value) -> Result<Command, ParseCommandError> {
@@ -124,8 +131,18 @@ impl Command {
         &self.args
     }
 
+    pub fn lock(&self) -> Option<Lock> {
+        self.lock
+    }
+
     pub fn drain_args(&mut self) -> std::vec::Drain<String> {
         self.args.drain(..)
+    }
+}
+
+impl fmt::Display for Command {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.action.fmt(f)
     }
 }
 
@@ -233,13 +250,13 @@ fn parse_ping(array: &Vec<resp::Value>) -> Result<Command, ParseCommandError> {
         .map(|arg| vec![arg])
         .or(Ok(vec![]))?;
 
-    Ok(Command::new(Action::Ping, args))
+    Ok(Command::new(Action::Ping, args, None))
 }
 
 fn parse_echo(array: &Vec<resp::Value>) -> Result<Command, ParseCommandError> {
     expect_max_args(Action::Echo, &array, 1)?;
     let arg = next_arg(array.iter().skip(1), Action::Echo)?;
-    Ok(Command::new(Action::Echo, vec![arg]))
+    Ok(Command::new(Action::Echo, vec![arg], None))
 }
 
 fn parse_set(array: &Vec<resp::Value>) -> Result<Command, ParseCommandError> {
@@ -247,7 +264,7 @@ fn parse_set(array: &Vec<resp::Value>) -> Result<Command, ParseCommandError> {
     let key = next_arg(&mut iter, Action::Set)?;
     let val = next_arg(&mut iter, Action::Set)?;
 
-    Ok(Command::new(Action::Set, vec![key, val]))
+    Ok(Command::new(Action::Set, vec![key, val], Some(Lock::Write)))
 }
 
 fn parse_setex(array: &Vec<resp::Value>) -> Result<Command, ParseCommandError> {
@@ -261,6 +278,7 @@ fn parse_setex(array: &Vec<resp::Value>) -> Result<Command, ParseCommandError> {
             next_arg(&mut iter, action)?,
             next_arg(&mut iter, action)?,
         ],
+        Some(Lock::Write),
     ))
 }
 
@@ -269,7 +287,7 @@ fn parse_get(array: &Vec<resp::Value>) -> Result<Command, ParseCommandError> {
     let mut iter = array.iter().skip(1);
     let key = next_arg(&mut iter, Action::Get)?;
 
-    Ok(Command::new(Action::Get, vec![key]))
+    Ok(Command::new(Action::Get, vec![key], Some(Lock::Read)))
 }
 
 fn parse_expire(array: &Vec<resp::Value>) -> Result<Command, ParseCommandError> {
@@ -278,23 +296,27 @@ fn parse_expire(array: &Vec<resp::Value>) -> Result<Command, ParseCommandError> 
     let key = next_arg(&mut iter, Action::Expire)?;
     let ttl = next_arg(&mut iter, Action::Expire)?;
 
-    Ok(Command::new(Action::Expire, vec![key, ttl]))
+    Ok(Command::new(
+        Action::Expire,
+        vec![key, ttl],
+        Some(Lock::Write),
+    ))
 }
 
 fn parse_ttl(array: &Vec<resp::Value>) -> Result<Command, ParseCommandError> {
     expect_max_args(Action::Ttl, &array, 1)?;
     let key = next_arg(array.iter().skip(1), Action::Ttl)?;
-    Ok(Command::new(Action::Ttl, vec![key]))
+    Ok(Command::new(Action::Ttl, vec![key], Some(Lock::Read)))
 }
 
 fn parse_multi(array: &Vec<resp::Value>) -> Result<Command, ParseCommandError> {
     expect_max_args(Action::Multi, &array, 0)?;
-    Ok(Command::new(Action::Multi, vec![]))
+    Ok(Command::new(Action::Multi, vec![], None))
 }
 
 fn parse_exec(array: &Vec<resp::Value>) -> Result<Command, ParseCommandError> {
     expect_max_args(Action::Exec, &array, 0)?;
-    Ok(Command::new(Action::Exec, vec![]))
+    Ok(Command::new(Action::Exec, vec![], None))
 }
 
 #[cfg(test)]
@@ -304,11 +326,11 @@ mod tests {
     #[test]
     fn test_parse_ping() {
         assert_eq!(
-            Ok(Command::new(Action::Ping, vec![])),
+            Ok(Command::new(Action::Ping, vec![], None)),
             parse_ping(&cmd!["PING"])
         );
         assert_eq!(
-            Ok(Command::new(Action::Ping, vec!["hello".to_owned()])),
+            Ok(Command::new(Action::Ping, vec!["hello".to_owned()], None)),
             parse_ping(&cmd!["PING", "hello"])
         );
         assert_eq!(
@@ -330,7 +352,7 @@ mod tests {
             parse_echo(&cmd!["ECHO"])
         );
         assert_eq!(
-            Ok(Command::new(Action::Echo, vec!["hello".to_owned()])),
+            Ok(Command::new(Action::Echo, vec!["hello".to_owned()], None)),
             parse_echo(&cmd!["ECHO", "hello"])
         );
         assert_eq!(
@@ -347,7 +369,8 @@ mod tests {
         assert_eq!(
             Ok(Command::new(
                 Action::Set,
-                vec!["foo".to_owned(), "bar".to_owned()]
+                vec!["foo".to_owned(), "bar".to_owned()],
+                Some(Lock::Write)
             )),
             parse_set(&cmd!["SET", "foo", "bar"])
         );
@@ -356,7 +379,11 @@ mod tests {
     #[test]
     fn test_parse_get() {
         assert_eq!(
-            Ok(Command::new(Action::Get, vec!["foo".to_owned()])),
+            Ok(Command::new(
+                Action::Get,
+                vec!["foo".to_owned()],
+                Some(Lock::Read)
+            )),
             parse_get(&cmd!["GET", "foo"])
         );
     }
@@ -366,7 +393,8 @@ mod tests {
         assert_eq!(
             Ok(Command::new(
                 Action::Expire,
-                vec!["foo".to_owned(), "5".to_owned()]
+                vec!["foo".to_owned(), "5".to_owned()],
+                Some(Lock::Write)
             )),
             parse_expire(&cmd!["EXPIRE", "foo", "5"])
         );
@@ -375,7 +403,11 @@ mod tests {
     #[test]
     fn test_parse_ttl() {
         assert_eq!(
-            Ok(Command::new(Action::Ttl, vec!["foo".to_owned()])),
+            Ok(Command::new(
+                Action::Ttl,
+                vec!["foo".to_owned()],
+                Some(Lock::Read)
+            )),
             parse_ttl(&cmd!["TTL", "foo"])
         );
     }
@@ -385,7 +417,8 @@ mod tests {
         assert_eq!(
             Ok(Command::new(
                 Action::SetEx,
-                vec!["foo".to_owned(), "10".to_owned(), "bar".to_owned()]
+                vec!["foo".to_owned(), "10".to_owned(), "bar".to_owned()],
+                Some(Lock::Write)
             )),
             parse_setex(&cmd!["SETEX", "foo", "10", "bar"])
         );

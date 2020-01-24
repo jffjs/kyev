@@ -9,7 +9,7 @@ use async_std::{
 #[macro_use]
 extern crate lazy_static;
 
-use kyev::command::{Action, Command};
+use kyev::command::{self, Action, Command};
 use kyev::store::{self, Expiration, Store, TTL};
 use kyev::transaction::Transaction;
 
@@ -69,14 +69,33 @@ async fn connection_loop(client_addr: SocketAddr, stream: TcpStream) -> Result<(
                             }
                             resp::encode(&resp::simple_string("OK"))
                         }
-                        Action::Exec => unimplemented!(),
+                        Action::Exec => {
+                            if let Some(trx) = transaction.take() {
+                                execute_transaction(trx).await
+                            } else {
+                                resp::encode(&resp::Value::Null)
+                            }
+                        }
                         _ => {
                             if let Some(mut trx) = transaction.take() {
                                 trx.push(cmd);
                                 transaction = Some(trx);
                                 resp::encode(&resp::simple_string("QUEUED"))
                             } else {
-                                execute_cmd(cmd).await
+                                if let Some(lock) = cmd.lock() {
+                                    match lock {
+                                        command::Lock::Read => {
+                                            let store = STORE.read().await;
+                                            execute_read_cmd(&store, cmd)
+                                        }
+                                        command::Lock::Write => {
+                                            let mut store = STORE.write().await;
+                                            execute_write_cmd(&mut store, cmd)
+                                        }
+                                    }
+                                } else {
+                                    execute_cmd(cmd)
+                                }
                             }
                         }
                     },
@@ -108,9 +127,8 @@ async fn execute_transaction(trx: Transaction) -> String {
     "TODO".to_owned()
 }
 
-async fn execute_cmd(cmd: Command) -> String {
+fn execute_cmd(cmd: Command) -> String {
     use kyev::command::Action::*;
-
     match cmd.action() {
         Multi | Exec => panic!("unreachable"),
         Ping => resp::encode(
@@ -123,11 +141,28 @@ async fn execute_cmd(cmd: Command) -> String {
         Echo => resp::encode(&resp::bulk_string(
             &cmd.args().first().unwrap_or(&String::new()),
         )),
-        Set => execute_set(cmd).await,
-        SetEx => execute_setex(cmd).await,
-        Get => execute_get(cmd).await,
-        Expire => execute_expire(cmd).await,
-        Ttl => execute_ttl(cmd).await,
+        _ => panic!("Command '{}' requires store access", cmd),
+    }
+}
+
+fn execute_read_cmd(store: &Store, cmd: Command) -> String {
+    use kyev::command::Action::*;
+
+    match cmd.action() {
+        Get => execute_get(store, cmd),
+        Ttl => execute_ttl(store, cmd),
+        _ => panic!("Command '{}' should be executed with write access", cmd),
+    }
+}
+
+fn execute_write_cmd(store: &mut Store, cmd: Command) -> String {
+    use kyev::command::Action::*;
+
+    match cmd.action() {
+        Set => execute_set(store, cmd),
+        SetEx => execute_setex(store, cmd),
+        Expire => execute_expire(store, cmd),
+        _ => panic!("Command '{}' should be executed with read access", cmd),
     }
 }
 
@@ -142,8 +177,7 @@ async fn create_expiration_task(ttl: u64, key: String) {
     store.remove(&key);
 }
 
-async fn execute_set(mut cmd: Command) -> String {
-    let mut store = STORE.write().await;
+fn execute_set(store: &mut Store, mut cmd: Command) -> String {
     let mut drain = cmd.drain_args();
     let key = drain.next().unwrap();
     let val = drain.next().unwrap();
@@ -151,8 +185,7 @@ async fn execute_set(mut cmd: Command) -> String {
     resp::encode(&resp::simple_string("OK"))
 }
 
-async fn execute_setex(mut cmd: Command) -> String {
-    let mut store = STORE.write().await;
+fn execute_setex(store: &mut Store, mut cmd: Command) -> String {
     let mut drain = cmd.drain_args();
     let key = drain.next().unwrap();
     let ttl = drain.next().unwrap().parse::<i64>().unwrap();
@@ -166,8 +199,7 @@ async fn execute_setex(mut cmd: Command) -> String {
     resp::encode(&resp::simple_string("OK"))
 }
 
-async fn execute_get(cmd: Command) -> String {
-    let store = STORE.read().await;
+fn execute_get(store: &Store, cmd: Command) -> String {
     let key = cmd.args().first().unwrap();
     let val = store.get(key);
     resp::encode(&match val {
@@ -179,12 +211,11 @@ async fn execute_get(cmd: Command) -> String {
     })
 }
 
-async fn execute_expire(mut cmd: Command) -> String {
+fn execute_expire(store: &mut Store, mut cmd: Command) -> String {
     let mut drain = cmd.drain_args();
     let key = drain.next().unwrap();
     let ttl = drain.next().unwrap().parse::<i64>().unwrap();
 
-    let mut store = STORE.write().await;
     if ttl < 0 {
         resp::encode(&resp::integer(match store.remove(&key) {
             Some(_) => 1,
@@ -203,8 +234,7 @@ async fn execute_expire(mut cmd: Command) -> String {
     }
 }
 
-async fn execute_ttl(cmd: Command) -> String {
-    let store = STORE.read().await;
+fn execute_ttl(store: &Store, cmd: Command) -> String {
     let key = cmd.args().first().unwrap();
     resp::encode(&resp::integer(match store.ttl(key) {
         TTL::Expires(ttl) => ttl,
