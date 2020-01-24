@@ -76,6 +76,14 @@ async fn connection_loop(client_addr: SocketAddr, stream: TcpStream) -> Result<(
                                 resp::Value::Null
                             }
                         }
+                        Action::Discard => {
+                            if transaction.is_some() {
+                                transaction.take();
+                                resp::simple_string("OK")
+                            } else {
+                                resp::Value::Null
+                            }
+                        }
                         _ => {
                             if let Some(mut trx) = transaction.take() {
                                 trx.push(cmd);

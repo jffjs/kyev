@@ -25,6 +25,7 @@ pub enum Action {
     Ttl,
     Multi,
     Exec,
+    Discard,
 }
 
 impl Action {
@@ -49,6 +50,8 @@ impl Action {
             Ok(Action::Multi)
         } else if s == "exec" {
             Ok(Action::Exec)
+        } else if s == "discard" {
+            Ok(Action::Discard)
         } else {
             Err(ParseCommandError::new_with_context(
                 ParseCommandErrorKind::UnknownCommand,
@@ -72,6 +75,7 @@ impl fmt::Display for Action {
             Ttl => "ttl".fmt(f),
             Multi => "multi".fmt(f),
             Exec => "exec".fmt(f),
+            Discard => "discard".fmt(f),
         }
     }
 }
@@ -114,6 +118,7 @@ impl Command {
                             Ttl => parse_ttl(&array),
                             Multi => parse_multi(&array),
                             Exec => parse_exec(&array),
+                            Discard => parse_discard(&array),
                         }
                     }
                     _ => Err(ParseCommandError::new(InvalidCommand, None)),
@@ -305,19 +310,24 @@ fn parse_expire(array: &Vec<resp::Value>) -> Result<Command, ParseCommandError> 
 }
 
 fn parse_ttl(array: &Vec<resp::Value>) -> Result<Command, ParseCommandError> {
-    expect_max_args(Action::Ttl, &array, 1)?;
+    expect_max_args(Action::Ttl, array, 1)?;
     let key = next_arg(array.iter().skip(1), Action::Ttl)?;
     Ok(Command::new(Action::Ttl, vec![key], Some(Lock::Read)))
 }
 
 fn parse_multi(array: &Vec<resp::Value>) -> Result<Command, ParseCommandError> {
-    expect_max_args(Action::Multi, &array, 0)?;
+    expect_max_args(Action::Multi, array, 0)?;
     Ok(Command::new(Action::Multi, vec![], None))
 }
 
 fn parse_exec(array: &Vec<resp::Value>) -> Result<Command, ParseCommandError> {
-    expect_max_args(Action::Exec, &array, 0)?;
+    expect_max_args(Action::Exec, array, 0)?;
     Ok(Command::new(Action::Exec, vec![], None))
+}
+
+fn parse_discard(array: &Vec<resp::Value>) -> Result<Command, ParseCommandError> {
+    expect_max_args(Action::Discard, array, 0)?;
+    Ok(Command::new(Action::Discard, vec![], None))
 }
 
 #[cfg(test)]
