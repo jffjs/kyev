@@ -56,21 +56,7 @@ fn main() -> Result<()> {
 
             match resp::decode(&output) {
                 Ok(value) => {
-                    match value {
-                        resp::Value::SimpleString(s) | resp::Value::BulkString(s) => {
-                            println!("\"{}\"", s);
-                        }
-                        resp::Value::Error(e) => {
-                            println!("{}", e);
-                        }
-                        resp::Value::Null => {
-                            println!("(nil)");
-                        }
-                        resp::Value::Integer(i) => {
-                            println!("(integer) {}", i);
-                        }
-                        _ => unimplemented!(),
-                    }
+                    println!("{}", translate_resp(&value));
                     output.clear();
                     break;
                 }
@@ -80,6 +66,24 @@ fn main() -> Result<()> {
                     output.clear();
                 }
             }
+        }
+    }
+}
+
+fn translate_resp(value: &resp::Value) -> String {
+    use resp::Value;
+    match value {
+        Value::SimpleString(s) | Value::BulkString(s) => format!("\"{}\"", s),
+        Value::Error(e) => format!("{}", e),
+        Value::Null => format!("(nil)"),
+        Value::Integer(i) => format!("(integer) {}", i),
+        Value::Array(arr) => {
+            let lines: Vec<String> = arr
+                .iter()
+                .enumerate()
+                .map(|(i, val)| format!("{}) {}", i + 1, translate_resp(&val)))
+                .collect();
+            lines.join("\n")
         }
     }
 }

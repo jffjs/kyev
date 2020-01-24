@@ -67,20 +67,20 @@ async fn connection_loop(client_addr: SocketAddr, stream: TcpStream) -> Result<(
                             if let None = transaction {
                                 transaction = Some(Transaction::new());
                             }
-                            resp::encode(&resp::simple_string("OK"))
+                            resp::simple_string("OK")
                         }
                         Action::Exec => {
                             if let Some(trx) = transaction.take() {
                                 execute_transaction(trx).await
                             } else {
-                                resp::encode(&resp::Value::Null)
+                                resp::Value::Null
                             }
                         }
                         _ => {
                             if let Some(mut trx) = transaction.take() {
                                 trx.push(cmd);
                                 transaction = Some(trx);
-                                resp::encode(&resp::simple_string("QUEUED"))
+                                resp::simple_string("QUEUED")
                             } else {
                                 if let Some(lock) = cmd.lock() {
                                     match lock {
@@ -101,11 +101,11 @@ async fn connection_loop(client_addr: SocketAddr, stream: TcpStream) -> Result<(
                     },
                     Err(e) => {
                         let msg = format!("{}", e);
-                        resp::encode(&resp::error(msg.as_str()))
+                        resp::error(msg.as_str())
                     }
                 };
                 let mut stream = &*stream;
-                stream.write_all(response.as_bytes()).await?;
+                stream.write_all(resp::encode(&response).as_bytes()).await?;
                 string_buf.clear();
             }
             Err(resp::Error::IncompleteRespError) => continue,
@@ -122,30 +122,43 @@ async fn connection_loop(client_addr: SocketAddr, stream: TcpStream) -> Result<(
     Ok(())
 }
 
-async fn execute_transaction(trx: Transaction) -> String {
-    let store = STORE.write().await;
-    "TODO".to_owned()
+async fn execute_transaction(mut trx: Transaction) -> resp::Value {
+    let mut store = STORE.write().await;
+    let results: Vec<resp::Value> = trx
+        .drain_queue()
+        .map(move |cmd| {
+            if let Some(lock) = cmd.lock() {
+                match lock {
+                    command::Lock::Read => execute_read_cmd(&store, cmd),
+                    command::Lock::Write => execute_write_cmd(&mut store, cmd),
+                }
+            } else {
+                execute_cmd(cmd)
+            }
+        })
+        .collect();
+
+    resp::array(results)
 }
 
-fn execute_cmd(cmd: Command) -> String {
+fn execute_cmd(cmd: Command) -> resp::Value {
     use kyev::command::Action::*;
     match cmd.action() {
         Multi | Exec => panic!("unreachable"),
-        Ping => resp::encode(
-            &(if let Some(arg) = cmd.args().first() {
+        Ping => {
+            if let Some(arg) = cmd.args().first() {
                 resp::bulk_string(&arg)
             } else {
                 resp::simple_string("PONG")
-            }),
-        ),
-        Echo => resp::encode(&resp::bulk_string(
-            &cmd.args().first().unwrap_or(&String::new()),
-        )),
+            }
+        }
+
+        Echo => resp::bulk_string(&cmd.args().first().unwrap_or(&String::new())),
         _ => panic!("Command '{}' requires store access", cmd),
     }
 }
 
-fn execute_read_cmd(store: &Store, cmd: Command) -> String {
+fn execute_read_cmd(store: &Store, cmd: Command) -> resp::Value {
     use kyev::command::Action::*;
 
     match cmd.action() {
@@ -155,7 +168,7 @@ fn execute_read_cmd(store: &Store, cmd: Command) -> String {
     }
 }
 
-fn execute_write_cmd(store: &mut Store, cmd: Command) -> String {
+fn execute_write_cmd(store: &mut Store, cmd: Command) -> resp::Value {
     use kyev::command::Action::*;
 
     match cmd.action() {
@@ -177,15 +190,15 @@ async fn create_expiration_task(ttl: u64, key: String) {
     store.remove(&key);
 }
 
-fn execute_set(store: &mut Store, mut cmd: Command) -> String {
+fn execute_set(store: &mut Store, mut cmd: Command) -> resp::Value {
     let mut drain = cmd.drain_args();
     let key = drain.next().unwrap();
     let val = drain.next().unwrap();
     store.set(key, val);
-    resp::encode(&resp::simple_string("OK"))
+    resp::simple_string("OK")
 }
 
-fn execute_setex(store: &mut Store, mut cmd: Command) -> String {
+fn execute_setex(store: &mut Store, mut cmd: Command) -> resp::Value {
     let mut drain = cmd.drain_args();
     let key = drain.next().unwrap();
     let ttl = drain.next().unwrap().parse::<i64>().unwrap();
@@ -196,49 +209,49 @@ fn execute_setex(store: &mut Store, mut cmd: Command) -> String {
         &key,
         Expiration::new(time::Duration::seconds(ttl), join_handle),
     );
-    resp::encode(&resp::simple_string("OK"))
+    resp::simple_string("OK")
 }
 
-fn execute_get(store: &Store, cmd: Command) -> String {
+fn execute_get(store: &Store, cmd: Command) -> resp::Value {
     let key = cmd.args().first().unwrap();
     let val = store.get(key);
-    resp::encode(&match val {
+    match val {
         Some(v) => match v {
             store::Value::Int(i) => resp::bulk_string(i.to_string().as_str()),
             store::Value::Str(s) => resp::bulk_string(s.as_str()),
         },
         None => resp::Value::Null,
-    })
+    }
 }
 
-fn execute_expire(store: &mut Store, mut cmd: Command) -> String {
+fn execute_expire(store: &mut Store, mut cmd: Command) -> resp::Value {
     let mut drain = cmd.drain_args();
     let key = drain.next().unwrap();
     let ttl = drain.next().unwrap().parse::<i64>().unwrap();
 
     if ttl < 0 {
-        resp::encode(&resp::integer(match store.remove(&key) {
+        resp::integer(match store.remove(&key) {
             Some(_) => 1,
             None => 0,
-        }))
+        })
     } else {
         let join_handle = task::spawn(create_expiration_task(ttl as u64, key.clone()));
         if let Some(_) = store.expire(
             &key,
             Expiration::new(time::Duration::seconds(ttl), join_handle),
         ) {
-            resp::encode(&resp::integer(1))
+            resp::integer(1)
         } else {
-            resp::encode(&resp::integer(0))
+            resp::integer(0)
         }
     }
 }
 
-fn execute_ttl(store: &Store, cmd: Command) -> String {
+fn execute_ttl(store: &Store, cmd: Command) -> resp::Value {
     let key = cmd.args().first().unwrap();
-    resp::encode(&resp::integer(match store.ttl(key) {
+    resp::integer(match store.ttl(key) {
         TTL::Expires(ttl) => ttl,
         TTL::NoExpiration => -1,
         TTL::KeyNotFound => -2,
-    }))
+    })
 }

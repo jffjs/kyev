@@ -17,4 +17,8 @@ impl Transaction {
     pub fn push(&mut self, cmd: Command) {
         self.queue.push(cmd);
     }
+
+    pub fn drain_queue(&mut self) -> std::vec::Drain<Command> {
+        self.queue.drain(..)
+    }
 }

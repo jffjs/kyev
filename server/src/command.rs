@@ -268,6 +268,7 @@ fn parse_set(array: &Vec<resp::Value>) -> Result<Command, ParseCommandError> {
 }
 
 fn parse_setex(array: &Vec<resp::Value>) -> Result<Command, ParseCommandError> {
+    // TODO: ensure ttl is positive
     let action = Action::SetEx;
     expect_max_args(action, &array, 3)?;
     let mut iter = array.iter().skip(1);
