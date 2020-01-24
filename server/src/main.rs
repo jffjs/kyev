@@ -210,6 +210,7 @@ fn execute_write_cmd(store: &mut Store, cmd: Command) -> resp::Value {
     match cmd.action() {
         Set => execute_set(store, cmd),
         SetEx => execute_setex(store, cmd),
+        SetNx => execute_setnx(store, cmd),
         Expire => execute_expire(store, cmd),
         _ => panic!("Command '{}' should be executed with read access", cmd),
     }
@@ -246,6 +247,10 @@ fn execute_setex(store: &mut Store, mut cmd: Command) -> resp::Value {
         Expiration::new(time::Duration::seconds(ttl), join_handle),
     );
     resp::simple_string("OK")
+}
+
+fn execute_setnx(store: &mut Store, mut cmd: Command) -> resp::Value {
+    unimplemented!()
 }
 
 fn execute_get(store: &Store, cmd: Command) -> resp::Value {

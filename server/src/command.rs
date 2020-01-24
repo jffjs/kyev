@@ -20,6 +20,7 @@ pub enum Action {
     Echo,
     Set,
     SetEx,
+    SetNx,
     Get,
     Expire,
     Ttl,
@@ -42,6 +43,8 @@ impl Action {
             Ok(Action::Set)
         } else if s == "setex" {
             Ok(Action::SetEx)
+        } else if s == "setnx" {
+            Ok(Action::SetNx)
         } else if s == "get" {
             Ok(Action::Get)
         } else if s == "expire" {
@@ -76,6 +79,7 @@ impl fmt::Display for Action {
             Echo => "echo".fmt(f),
             Set => "set".fmt(f),
             SetEx => "setex".fmt(f),
+            SetNx => "setnx".fmt(f),
             Get => "get".fmt(f),
             Expire => "expire".fmt(f),
             Ttl => "ttl".fmt(f),
@@ -121,6 +125,7 @@ impl Command {
                             Echo => parse_echo(&array),
                             Set => parse_set(&array),
                             SetEx => parse_setex(&array),
+                            SetNx => parse_setnx(&array),
                             Get => parse_get(&array),
                             Expire => parse_expire(&array),
                             Ttl => parse_ttl(&array),
@@ -180,6 +185,7 @@ pub enum ParseCommandErrorKind {
     InvalidArgs,
     InvalidCommand,
     WrongNumberArgs,
+    InvalidTtl,
 }
 
 impl ParseCommandError {
@@ -229,6 +235,11 @@ impl fmt::Display for ParseCommandError {
             WrongNumberArgs => write!(
                 f,
                 "ERR wrong number of arguments for '{}' command",
+                self.action.as_ref().unwrap()
+            ),
+            InvalidTtl => write!(
+                f,
+                "ERR invalid expire time in {}",
                 self.action.as_ref().unwrap()
             ),
         }
@@ -287,17 +298,24 @@ fn parse_set(array: &Vec<resp::Value>) -> Result<Command, ParseCommandError> {
 }
 
 fn parse_setex(array: &Vec<resp::Value>) -> Result<Command, ParseCommandError> {
-    // TODO: ensure ttl is positive
     let action = Action::SetEx;
     expect_max_args(action, &array, 3)?;
     let mut iter = array.iter().skip(1);
+    let key = next_arg(&mut iter, action)?;
+    let ttl = next_arg(&mut iter, action)?;
+    ttl.parse::<u64>()
+        .map_err(|_| ParseCommandError::new(ParseCommandErrorKind::InvalidTtl, Some(action)))?;
+    let val = next_arg(&mut iter, action)?;
+    Ok(Command::new(action, vec![key, ttl, val], Some(Lock::Write)))
+}
+
+fn parse_setnx(array: &Vec<resp::Value>) -> Result<Command, ParseCommandError> {
+    let action = Action::SetNx;
+    expect_max_args(action, array, 2)?;
+    let mut iter = array.iter().skip(1);
     Ok(Command::new(
         action,
-        vec![
-            next_arg(&mut iter, action)?,
-            next_arg(&mut iter, action)?,
-            next_arg(&mut iter, action)?,
-        ],
+        vec![next_arg(&mut iter, action)?, next_arg(&mut iter, action)?],
         Some(Lock::Write),
     ))
 }
