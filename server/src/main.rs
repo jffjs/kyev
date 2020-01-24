@@ -11,6 +11,7 @@ extern crate lazy_static;
 
 use kyev::command::{Action, Command};
 use kyev::store::{self, Expiration, Store, TTL};
+use kyev::transaction::Transaction;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
@@ -51,6 +52,7 @@ async fn connection_loop(client_addr: SocketAddr, stream: TcpStream) -> Result<(
     let stream = Arc::new(stream);
     let mut reader = BufReader::new(&*stream);
     let mut string_buf = String::new();
+    let mut transaction: Option<Transaction> = None;
 
     while let Ok(bytes_read) = reader.read_line(&mut string_buf).await {
         if bytes_read == 0 {
@@ -61,9 +63,22 @@ async fn connection_loop(client_addr: SocketAddr, stream: TcpStream) -> Result<(
             Ok(value) => {
                 let response = match Command::from_resp(value) {
                     Ok(cmd) => match cmd.action() {
-                        Action::Multi => unimplemented!(),
+                        Action::Multi => {
+                            if let None = transaction {
+                                transaction = Some(Transaction::new());
+                            }
+                            resp::encode(&resp::simple_string("OK"))
+                        }
                         Action::Exec => unimplemented!(),
-                        _ => execute_cmd(cmd).await,
+                        _ => {
+                            if let Some(mut trx) = transaction.take() {
+                                trx.push(cmd);
+                                transaction = Some(trx);
+                                resp::encode(&resp::simple_string("QUEUED"))
+                            } else {
+                                execute_cmd(cmd).await
+                            }
+                        }
                     },
                     Err(e) => {
                         let msg = format!("{}", e);
@@ -86,6 +101,11 @@ async fn connection_loop(client_addr: SocketAddr, stream: TcpStream) -> Result<(
     println!("Client disconnected: {}", client_addr);
 
     Ok(())
+}
+
+async fn execute_transaction(trx: Transaction) -> String {
+    let store = STORE.write().await;
+    "TODO".to_owned()
 }
 
 async fn execute_cmd(cmd: Command) -> String {
