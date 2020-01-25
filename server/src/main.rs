@@ -250,7 +250,15 @@ fn execute_setex(store: &mut Store, mut cmd: Command) -> resp::Value {
 }
 
 fn execute_setnx(store: &mut Store, mut cmd: Command) -> resp::Value {
-    unimplemented!()
+    let mut drain = cmd.drain_args();
+    let key = drain.next().unwrap();
+    if let Some(_) = store.get(&key) {
+        resp::integer(0)
+    } else {
+        let val = drain.next().unwrap();
+        store.set(key, val);
+        resp::integer(1)
+    }
 }
 
 fn execute_get(store: &Store, cmd: Command) -> resp::Value {
