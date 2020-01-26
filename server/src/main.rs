@@ -212,12 +212,13 @@ fn execute_write_cmd(store: &mut Store, cmd: Command) -> resp::Value {
         SetEx => execute_setex(store, cmd),
         SetNx => execute_setnx(store, cmd),
         Expire => execute_expire(store, cmd),
+        PExpire => execute_pexpire(store, cmd),
         _ => panic!("Command '{}' should be executed with read access", cmd),
     }
 }
 
-async fn create_expiration_task(ttl: u64, key: String) {
-    task::sleep(std::time::Duration::from_secs(ttl)).await;
+async fn create_expiration_task(ttl: std::time::Duration, key: String) {
+    task::sleep(ttl).await;
     let mut store = STORE.write().await;
     if let TTL::Expires(ttl) = store.ttl(&key) {
         if ttl > 0 {
@@ -241,7 +242,10 @@ fn execute_setex(store: &mut Store, mut cmd: Command) -> resp::Value {
     let ttl = drain.next().unwrap().parse::<i64>().unwrap();
     let val = drain.next().unwrap();
     store.set(key.clone(), val);
-    let join_handle = task::spawn(create_expiration_task(ttl as u64, key.clone()));
+    let join_handle = task::spawn(create_expiration_task(
+        std::time::Duration::from_secs(ttl as u64),
+        key.clone(),
+    ));
     store.expire(
         &key,
         Expiration::new(time::Duration::seconds(ttl), join_handle),
@@ -284,10 +288,39 @@ fn execute_expire(store: &mut Store, mut cmd: Command) -> resp::Value {
             None => 0,
         })
     } else {
-        let join_handle = task::spawn(create_expiration_task(ttl as u64, key.clone()));
+        let join_handle = task::spawn(create_expiration_task(
+            std::time::Duration::from_secs(ttl as u64),
+            key.clone(),
+        ));
         if let Some(_) = store.expire(
             &key,
             Expiration::new(time::Duration::seconds(ttl), join_handle),
+        ) {
+            resp::integer(1)
+        } else {
+            resp::integer(0)
+        }
+    }
+}
+
+fn execute_pexpire(store: &mut Store, mut cmd: Command) -> resp::Value {
+    let mut drain = cmd.drain_args();
+    let key = drain.next().unwrap();
+    let ttl = drain.next().unwrap().parse::<i64>().unwrap();
+
+    if ttl < 0 {
+        resp::integer(match store.remove(&key) {
+            Some(_) => 1,
+            None => 0,
+        })
+    } else {
+        let join_handle = task::spawn(create_expiration_task(
+            std::time::Duration::from_millis(ttl as u64),
+            key.clone(),
+        ));
+        if let Some(_) = store.expire(
+            &key,
+            Expiration::new(time::Duration::milliseconds(ttl), join_handle),
         ) {
             resp::integer(1)
         } else {

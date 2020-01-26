@@ -23,6 +23,7 @@ pub enum Action {
     SetNx,
     Get,
     Expire,
+    PExpire,
     Ttl,
     Multi,
     Exec,
@@ -49,6 +50,8 @@ impl Action {
             Ok(Action::Get)
         } else if s == "expire" {
             Ok(Action::Expire)
+        } else if s == "pexpire" {
+            Ok(Action::PExpire)
         } else if s == "ttl" {
             Ok(Action::Ttl)
         } else if s == "multi" {
@@ -82,6 +85,7 @@ impl fmt::Display for Action {
             SetNx => "setnx".fmt(f),
             Get => "get".fmt(f),
             Expire => "expire".fmt(f),
+            PExpire => "pexpire".fmt(f),
             Ttl => "ttl".fmt(f),
             Multi => "multi".fmt(f),
             Exec => "exec".fmt(f),
@@ -128,6 +132,7 @@ impl Command {
                             SetNx => parse_setnx(&array),
                             Get => parse_get(&array),
                             Expire => parse_expire(&array),
+                            PExpire => parse_pexpire(&array),
                             Ttl => parse_ttl(&array),
                             Multi => parse_multi(&array),
                             Exec => parse_exec(&array),
@@ -333,6 +338,20 @@ fn parse_expire(array: &Vec<resp::Value>) -> Result<Command, ParseCommandError> 
     let mut iter = array.iter().skip(1);
     let key = next_arg(&mut iter, Action::Expire)?;
     let ttl = next_arg(&mut iter, Action::Expire)?;
+
+    Ok(Command::new(
+        Action::Expire,
+        vec![key, ttl],
+        Some(Lock::Write),
+    ))
+}
+
+fn parse_pexpire(array: &Vec<resp::Value>) -> Result<Command, ParseCommandError> {
+    let action = Action::PExpire;
+    expect_max_args(action, &array, 2)?;
+    let mut iter = array.iter().skip(1);
+    let key = next_arg(&mut iter, action)?;
+    let ttl = next_arg(&mut iter, action)?;
 
     Ok(Command::new(
         Action::Expire,
