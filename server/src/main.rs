@@ -5,6 +5,7 @@ use async_std::{
     sync::{Arc, RwLock},
     task,
 };
+use std::convert::TryFrom;
 use time::PrimitiveDateTime;
 
 #[macro_use]
@@ -211,8 +212,8 @@ fn execute_write_cmd(store: &mut Store, cmd: Command) -> resp::Value {
         Set => execute_set(store, cmd),
         SetEx => execute_setex(store, cmd),
         SetNx => execute_setnx(store, cmd),
-        Expire => execute_expire(store, cmd),
-        PExpire => execute_pexpire(store, cmd),
+        Expire => execute_expire(store, cmd, false),
+        PExpire => execute_expire(store, cmd, true),
         _ => panic!("Command '{}' should be executed with read access", cmd),
     }
 }
@@ -277,7 +278,7 @@ fn execute_get(store: &Store, cmd: Command) -> resp::Value {
     }
 }
 
-fn execute_expire(store: &mut Store, mut cmd: Command) -> resp::Value {
+fn execute_expire(store: &mut Store, mut cmd: Command, as_ms: bool) -> resp::Value {
     let mut drain = cmd.drain_args();
     let key = drain.next().unwrap();
     let ttl = drain.next().unwrap().parse::<i64>().unwrap();
@@ -288,39 +289,15 @@ fn execute_expire(store: &mut Store, mut cmd: Command) -> resp::Value {
             None => 0,
         })
     } else {
-        let join_handle = task::spawn(create_expiration_task(
-            std::time::Duration::from_secs(ttl as u64),
-            key.clone(),
-        ));
-        if let Some(_) = store.expire(
-            &key,
-            Expiration::new(time::Duration::seconds(ttl), join_handle),
-        ) {
-            resp::integer(1)
+        let duration = if as_ms {
+            std::time::Duration::from_millis(ttl as u64)
         } else {
-            resp::integer(0)
-        }
-    }
-}
-
-fn execute_pexpire(store: &mut Store, mut cmd: Command) -> resp::Value {
-    let mut drain = cmd.drain_args();
-    let key = drain.next().unwrap();
-    let ttl = drain.next().unwrap().parse::<i64>().unwrap();
-
-    if ttl < 0 {
-        resp::integer(match store.remove(&key) {
-            Some(_) => 1,
-            None => 0,
-        })
-    } else {
-        let join_handle = task::spawn(create_expiration_task(
-            std::time::Duration::from_millis(ttl as u64),
-            key.clone(),
-        ));
+            std::time::Duration::from_secs(ttl as u64)
+        };
+        let join_handle = task::spawn(create_expiration_task(duration, key.clone()));
         if let Some(_) = store.expire(
             &key,
-            Expiration::new(time::Duration::milliseconds(ttl), join_handle),
+            Expiration::new(time::Duration::try_from(duration).unwrap(), join_handle),
         ) {
             resp::integer(1)
         } else {
