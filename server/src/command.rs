@@ -1,4 +1,5 @@
 use resp;
+use std::collections::HashSet;
 use std::fmt;
 
 #[macro_export]
@@ -106,12 +107,18 @@ pub enum Lock {
 pub struct Command {
     action: Action,
     args: Vec<String>,
+    opts: HashSet<CommandOpt>,
     lock: Option<Lock>,
 }
 
 impl Command {
     pub fn new(action: Action, args: Vec<String>, lock: Option<Lock>) -> Command {
-        Command { action, args, lock }
+        Command {
+            action,
+            args,
+            lock,
+            opts: HashSet::new(),
+        }
     }
 
     pub fn from_resp(resp_value: resp::Value) -> Result<Command, ParseCommandError> {
@@ -167,12 +174,29 @@ impl Command {
     pub fn drain_args(&mut self) -> std::vec::Drain<String> {
         self.args.drain(..)
     }
+
+    pub fn opts(&self) -> &HashSet<CommandOpt> {
+        &self.opts
+    }
+
+    fn set_options(&mut self, opts: HashSet<CommandOpt>) {
+        self.opts = opts;
+    }
 }
 
 impl fmt::Display for Command {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         self.action.fmt(f)
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum CommandOpt {
+    SetEx(u64),
+    SetPx(u64),
+    SetNx,
+    SetXx,
+    SetKeepTtl,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -191,6 +215,7 @@ pub enum ParseCommandErrorKind {
     InvalidCommand,
     WrongNumberArgs,
     InvalidTtl,
+    SyntaxError,
 }
 
 impl ParseCommandError {
@@ -247,7 +272,14 @@ impl fmt::Display for ParseCommandError {
                 "ERR invalid expire time in {}",
                 self.action.as_ref().unwrap()
             ),
+            SyntaxError => write!(f, "ERR syntax error"),
         }
+    }
+}
+
+impl std::convert::From<resp::Error> for ParseCommandError {
+    fn from(_: resp::Error) -> Self {
+        ParseCommandError::new(ParseCommandErrorKind::InvalidArgs, None)
     }
 }
 
@@ -276,14 +308,17 @@ where
             Some(action),
         ))?
         .to_string()
-        .map_err(|_| ParseCommandError::new(ParseCommandErrorKind::InvalidArgs, Some(action)))
+        .map_err(|err| ParseCommandError::from(err))
 }
 
 fn parse_ping(array: &Vec<resp::Value>) -> Result<Command, ParseCommandError> {
     expect_max_args(Action::Ping, &array, 1)?;
-    let args = next_arg(array.iter().skip(1), Action::Ping)
-        .map(|arg| vec![arg])
-        .or(Ok(vec![]))?;
+    let arg = next_arg(array.iter().skip(1), Action::Ping);
+    let args = if let Ok(arg) = arg {
+        vec![arg]
+    } else {
+        Vec::new()
+    };
 
     Ok(Command::new(Action::Ping, args, None))
 }
@@ -298,8 +333,56 @@ fn parse_set(array: &Vec<resp::Value>) -> Result<Command, ParseCommandError> {
     let mut iter = array.iter().skip(1);
     let key = next_arg(&mut iter, Action::Set)?;
     let val = next_arg(&mut iter, Action::Set)?;
+    let mut options = HashSet::new();
 
-    Ok(Command::new(Action::Set, vec![key, val], Some(Lock::Write)))
+    loop {
+        if let Some(next) = iter.next() {
+            let opt = next.to_string()?.to_lowercase();
+            let opt_str = opt.as_str();
+            if "ex" == opt_str || "px" == opt_str {
+                if let Some(ttl) = iter.next() {
+                    let ttl = ttl.to_string()?.parse::<u64>().map_err(|_| {
+                        ParseCommandError::new(ParseCommandErrorKind::InvalidTtl, Some(Action::Set))
+                    })?;
+                    let opt = if "ex" == opt_str {
+                        CommandOpt::SetEx(ttl)
+                    } else {
+                        CommandOpt::SetPx(ttl)
+                    };
+                    options.insert(opt);
+                } else {
+                    return Err(ParseCommandError::new(
+                        ParseCommandErrorKind::SyntaxError,
+                        Some(Action::Set),
+                    ));
+                }
+            } else if "nx" == opt_str {
+                if options.contains(&CommandOpt::SetXx) {
+                    return Err(ParseCommandError::new(
+                        ParseCommandErrorKind::SyntaxError,
+                        Some(Action::Set),
+                    ));
+                }
+                options.insert(CommandOpt::SetNx);
+            } else if "xx" == opt_str {
+                if options.contains(&CommandOpt::SetNx) {
+                    return Err(ParseCommandError::new(
+                        ParseCommandErrorKind::SyntaxError,
+                        Some(Action::Set),
+                    ));
+                }
+                options.insert(CommandOpt::SetXx);
+            } else if "keepttl" == opt_str {
+                options.insert(CommandOpt::SetKeepTtl);
+            }
+        } else {
+            break;
+        }
+    }
+    let mut cmd = Command::new(Action::Set, vec![key, val], Some(Lock::Write));
+    cmd.set_options(options);
+
+    Ok(cmd)
 }
 
 fn parse_setex(array: &Vec<resp::Value>) -> Result<Command, ParseCommandError> {
@@ -443,6 +526,7 @@ mod tests {
 
     #[test]
     fn test_parse_set() {
+        use ParseCommandErrorKind::*;
         assert_eq!(
             Ok(Command::new(
                 Action::Set,
@@ -450,6 +534,27 @@ mod tests {
                 Some(Lock::Write)
             )),
             parse_set(&cmd!["SET", "foo", "bar"])
+        );
+
+        let cmd_with_opts = parse_set(&cmd!["SET", "foo", "bar", "NX", "EX", "60"]).unwrap();
+        assert_eq!(
+            vec!["foo".to_owned(), "bar".to_owned(),],
+            cmd_with_opts.args
+        );
+        assert!(cmd_with_opts.opts().contains(&CommandOpt::SetNx));
+        assert!(cmd_with_opts.opts().contains(&CommandOpt::SetEx(60)));
+
+        assert_eq!(
+            Err(ParseCommandError::new(SyntaxError, Some(Action::Set))),
+            parse_set(&cmd!["SET", "foo", "bar", "EX"])
+        );
+        assert_eq!(
+            Err(ParseCommandError::new(InvalidTtl, Some(Action::Set))),
+            parse_set(&cmd!["SET", "foo", "bar", "EX", "-1"])
+        );
+        assert_eq!(
+            Err(ParseCommandError::new(SyntaxError, Some(Action::Set))),
+            parse_set(&cmd!["SET", "foo", "bar", "NX", "XX"])
         );
     }
 
