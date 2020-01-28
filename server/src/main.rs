@@ -58,6 +58,10 @@ async fn connection_loop(client_addr: SocketAddr, stream: TcpStream) -> Result<(
     let mut string_buf = String::new();
     let mut transaction: Option<Transaction> = None;
     let mut watch: Vec<WatchKey> = Vec::new();
+    let client_id = {
+        let mut store = STORE.write().await;
+        store.add_client(client_addr)
+    };
 
     while let Ok(bytes_read) = reader.read_line(&mut string_buf).await {
         if bytes_read == 0 {
@@ -146,6 +150,7 @@ async fn connection_loop(client_addr: SocketAddr, stream: TcpStream) -> Result<(
         }
     }
 
+    STORE.write().await.remove_client(&client_addr);
     println!("Client disconnected: {}", client_addr);
 
     Ok(())

@@ -31,6 +31,7 @@ pub enum Action {
     Discard,
     Watch,
     Unwatch,
+    // ClientId
 }
 
 impl Action {

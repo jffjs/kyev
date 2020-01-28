@@ -1,7 +1,10 @@
 use crate::command::Command;
+use async_std::net::SocketAddr;
 use async_std::task::JoinHandle;
 use std::collections::HashMap;
 use time::{Duration, PrimitiveDateTime};
+
+type ClientId = usize;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Value {
@@ -59,13 +62,28 @@ impl Entry {
 
 pub struct Store {
     data: HashMap<String, Entry>,
+    clients: HashMap<SocketAddr, ClientId>,
+    next_client_id: ClientId,
 }
 
 impl Store {
     pub fn new() -> Store {
         Store {
             data: HashMap::new(),
+            clients: HashMap::new(),
+            next_client_id: 1,
         }
+    }
+
+    pub fn add_client(&mut self, addr: SocketAddr) -> ClientId {
+        let client_id = self.next_client_id;
+        self.next_client_id += 1;
+        self.clients.insert(addr, client_id);
+        client_id
+    }
+
+    pub fn remove_client(&mut self, addr: &SocketAddr) {
+        self.clients.remove(addr);
     }
 
     pub fn set(&mut self, key: String, value: String, keep_ttl: bool) -> Option<()> {
