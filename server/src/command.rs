@@ -335,11 +335,21 @@ fn parse_set(array: &Vec<resp::Value>) -> Result<Command, ParseCommandError> {
     let val = next_arg(&mut iter, Action::Set)?;
     let mut options = HashSet::new();
 
+    let mut has_expire = false;
+    let mut has_keepttl = false;
     loop {
         if let Some(next) = iter.next() {
             let opt = next.to_string()?.to_lowercase();
             let opt_str = opt.as_str();
             if "ex" == opt_str || "px" == opt_str {
+                has_expire = true;
+                if has_keepttl {
+                    return Err(ParseCommandError::new(
+                        ParseCommandErrorKind::SyntaxError,
+                        Some(Action::Set),
+                    ));
+                }
+
                 if let Some(ttl) = iter.next() {
                     let ttl = ttl.to_string()?.parse::<u64>().map_err(|_| {
                         ParseCommandError::new(ParseCommandErrorKind::InvalidTtl, Some(Action::Set))
@@ -373,6 +383,13 @@ fn parse_set(array: &Vec<resp::Value>) -> Result<Command, ParseCommandError> {
                 }
                 options.insert(CommandOpt::SetXx);
             } else if "keepttl" == opt_str {
+                has_keepttl = true;
+                if has_expire {
+                    return Err(ParseCommandError::new(
+                        ParseCommandErrorKind::SyntaxError,
+                        Some(Action::Set),
+                    ));
+                }
                 options.insert(CommandOpt::SetKeepTtl);
             }
         } else {
@@ -536,7 +553,7 @@ mod tests {
             parse_set(&cmd!["SET", "foo", "bar"])
         );
 
-        let cmd_with_opts = parse_set(&cmd!["SET", "foo", "bar", "NX", "EX", "60"]).unwrap();
+        let cmd_with_opts = parse_set(&cmd!["SET", "foo", "bar", "EX", "60", "NX"]).unwrap();
         assert_eq!(
             vec!["foo".to_owned(), "bar".to_owned(),],
             cmd_with_opts.args
@@ -555,6 +572,10 @@ mod tests {
         assert_eq!(
             Err(ParseCommandError::new(SyntaxError, Some(Action::Set))),
             parse_set(&cmd!["SET", "foo", "bar", "NX", "XX"])
+        );
+        assert_eq!(
+            Err(ParseCommandError::new(SyntaxError, Some(Action::Set))),
+            parse_set(&cmd!["SET", "foo", "bar", "EX", "20", "KEEPTTL"])
         );
     }
 

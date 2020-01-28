@@ -68,14 +68,23 @@ impl Store {
         }
     }
 
-    pub fn set(&mut self, key: String, value: String) -> Option<()> {
+    pub fn set(&mut self, key: String, value: String, keep_ttl: bool) -> Option<()> {
         let value = if let Ok(int) = value.parse::<i64>() {
             Value::Int(int)
         } else {
             Value::Str(value)
         };
 
-        let entry = Entry::new(value);
+        let entry = if keep_ttl {
+            let maybe_expiration = self.data.remove(&key).and_then(|entry| entry.expiration);
+            let mut new_entry = Entry::new(value);
+            if let Some(exp) = maybe_expiration {
+                new_entry.set_expiration(exp);
+            }
+            new_entry
+        } else {
+            Entry::new(value)
+        };
         self.data.insert(key, entry);
 
         Some(())
@@ -139,8 +148,8 @@ mod tests {
     #[test]
     fn test_set_get() {
         let mut store = Store::new();
-        store.set("foo".to_owned(), "bar".to_owned());
-        store.set("a_num".to_owned(), "42".to_owned());
+        store.set("foo".to_owned(), "bar".to_owned(), false);
+        store.set("a_num".to_owned(), "42".to_owned(), false);
         assert_eq!(
             Some(&Value::Str("bar".to_owned())),
             store.get(&"foo".to_owned())

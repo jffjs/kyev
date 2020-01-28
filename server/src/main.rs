@@ -11,7 +11,7 @@ use time::PrimitiveDateTime;
 #[macro_use]
 extern crate lazy_static;
 
-use kyev::command::{self, Action, Command};
+use kyev::command::{self, Action, Command, CommandOpt};
 use kyev::store::{self, Expiration, Store, TTL};
 use kyev::transaction::Transaction;
 
@@ -230,10 +230,78 @@ async fn create_expiration_task(ttl: std::time::Duration, key: String) {
 }
 
 fn execute_set(store: &mut Store, mut cmd: Command) -> resp::Value {
-    let mut drain = cmd.drain_args();
-    let key = drain.next().unwrap();
-    let val = drain.next().unwrap();
-    store.set(key, val);
+    let key: String;
+    let val: String;
+    {
+        let mut drain = cmd.drain_args();
+        key = drain.next().unwrap();
+        val = drain.next().unwrap();
+    }
+
+    let mut maybe_ttl = None;
+    let mut keep_ttl = false;
+    let mut xx = false;
+    let mut nx = false;
+    for opt in cmd.opts().iter() {
+        match opt {
+            CommandOpt::SetEx(ttl_sec) => maybe_ttl = Some(ttl_sec * 1000),
+            CommandOpt::SetPx(ttl_ms) => maybe_ttl = Some(*ttl_ms),
+            CommandOpt::SetKeepTtl => keep_ttl = true,
+            CommandOpt::SetXx => xx = true,
+            CommandOpt::SetNx => nx = true,
+            _ => continue,
+        };
+    }
+
+    if xx {
+        if let Some(_) = store.get(&key) {
+            store.set(key.clone(), val, keep_ttl);
+            if let Some(ttl) = maybe_ttl {
+                let join_handle = task::spawn(create_expiration_task(
+                    std::time::Duration::from_millis(ttl),
+                    key.clone(),
+                ));
+                store.expire(
+                    &key,
+                    Expiration::new(time::Duration::milliseconds(ttl as i64), join_handle),
+                );
+            }
+            return resp::integer(1);
+        } else {
+            return resp::integer(0);
+        }
+    }
+
+    if nx {
+        if let None = store.get(&key) {
+            store.set(key.clone(), val, keep_ttl);
+            if let Some(ttl) = maybe_ttl {
+                let join_handle = task::spawn(create_expiration_task(
+                    std::time::Duration::from_millis(ttl),
+                    key.clone(),
+                ));
+                store.expire(
+                    &key,
+                    Expiration::new(time::Duration::milliseconds(ttl as i64), join_handle),
+                );
+            }
+            return resp::integer(1);
+        } else {
+            return resp::integer(0);
+        }
+    }
+
+    store.set(key.clone(), val, keep_ttl);
+    if let Some(ttl) = maybe_ttl {
+        let join_handle = task::spawn(create_expiration_task(
+            std::time::Duration::from_millis(ttl),
+            key.clone(),
+        ));
+        store.expire(
+            &key,
+            Expiration::new(time::Duration::milliseconds(ttl as i64), join_handle),
+        );
+    }
     resp::simple_string("OK")
 }
 
@@ -242,7 +310,7 @@ fn execute_setex(store: &mut Store, mut cmd: Command) -> resp::Value {
     let key = drain.next().unwrap();
     let ttl = drain.next().unwrap().parse::<i64>().unwrap();
     let val = drain.next().unwrap();
-    store.set(key.clone(), val);
+    store.set(key.clone(), val, false);
     let join_handle = task::spawn(create_expiration_task(
         std::time::Duration::from_secs(ttl as u64),
         key.clone(),
@@ -261,7 +329,7 @@ fn execute_setnx(store: &mut Store, mut cmd: Command) -> resp::Value {
         resp::integer(0)
     } else {
         let val = drain.next().unwrap();
-        store.set(key, val);
+        store.set(key, val, false);
         resp::integer(1)
     }
 }
