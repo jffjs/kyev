@@ -1,6 +1,36 @@
 use resp;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
+
+lazy_static! {
+    static ref COMMAND_MAP: HashMap<&'static str, Action> = {
+        use Action::*;
+        let mut map = HashMap::new();
+        map.insert("ping", Ping);
+        map.insert("echo", Echo);
+        map.insert("set", Set);
+        map.insert("setex", SetEx);
+        map.insert("setnx", SetNx);
+        map.insert("get", Get);
+        map.insert("expire", Expire);
+        map.insert("pexpire", PExpire);
+        map.insert("ttl", Ttl);
+        map.insert("multi", Multi);
+        map.insert("exec", Exec);
+        map.insert("discard", Discard);
+        map.insert("watch", Watch);
+        map.insert("unwatch", Unwatch);
+        map.insert("client id", ClientId);
+
+        map
+    };
+    static ref COMMAND_PREFIX: HashSet<&'static str> = {
+        let mut set = HashSet::new();
+        set.insert("client");
+
+        set
+    };
+}
 
 #[macro_export]
 macro_rules! cmd {
@@ -31,41 +61,15 @@ pub enum Action {
     Discard,
     Watch,
     Unwatch,
-    // ClientId
+    ClientId,
 }
 
 impl Action {
     pub fn parse(s: &String) -> Result<Action, ParseCommandError> {
         let s = s.to_lowercase();
         let s = s.as_str();
-        if s == "ping" {
-            Ok(Action::Ping)
-        } else if s == "echo" {
-            Ok(Action::Echo)
-        } else if s == "set" {
-            Ok(Action::Set)
-        } else if s == "setex" {
-            Ok(Action::SetEx)
-        } else if s == "setnx" {
-            Ok(Action::SetNx)
-        } else if s == "get" {
-            Ok(Action::Get)
-        } else if s == "expire" {
-            Ok(Action::Expire)
-        } else if s == "pexpire" {
-            Ok(Action::PExpire)
-        } else if s == "ttl" {
-            Ok(Action::Ttl)
-        } else if s == "multi" {
-            Ok(Action::Multi)
-        } else if s == "exec" {
-            Ok(Action::Exec)
-        } else if s == "discard" {
-            Ok(Action::Discard)
-        } else if s == "watch" {
-            Ok(Action::Watch)
-        } else if s == "unwatch" {
-            Ok(Action::Unwatch)
+        if let Some(action) = COMMAND_MAP.get(s) {
+            Ok(*action)
         } else {
             Err(ParseCommandError::new_with_context(
                 ParseCommandErrorKind::UnknownCommand,
@@ -94,6 +98,7 @@ impl fmt::Display for Action {
             Discard => "discard".fmt(f),
             Watch => "watch".fmt(f),
             Unwatch => "unwatch".fmt(f),
+            ClientId => "client id".fmt(f),
         }
     }
 }
@@ -129,9 +134,25 @@ impl Command {
         match resp_value {
             resp::Value::Array(array) => {
                 let action_resp = array.first().ok_or(ParseCommandError::new(IsEmpty, None))?;
+
                 match action_resp {
                     resp::Value::BulkString(cmd) => {
-                        let action = Action::parse(cmd)?;
+                        let action = if COMMAND_PREFIX.contains(cmd.as_str()) {
+                            let next = array
+                                .iter()
+                                .nth(1)
+                                .ok_or(ParseCommandError::new_with_context(
+                                    UnknownCommand,
+                                    None,
+                                    cmd.to_string(),
+                                ))?
+                                .to_string()
+                                .map_err(|_| ParseCommandError::new(InvalidCommand, None))?;
+                            Action::parse(&format!("{} {}", cmd, next))?
+                        } else {
+                            Action::parse(cmd)?
+                        };
+
                         match action {
                             Ping => parse_ping(&array),
                             Echo => parse_echo(&array),
@@ -147,6 +168,7 @@ impl Command {
                             Discard => parse_discard(&array),
                             Watch => parse_watch(&array),
                             Unwatch => parse_unwatch(&array),
+                            ClientId => Ok(Command::new(ClientId, vec![], None)),
                         }
                     }
                     _ => Err(ParseCommandError::new(InvalidCommand, None)),

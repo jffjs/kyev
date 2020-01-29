@@ -72,6 +72,7 @@ async fn connection_loop(client_addr: SocketAddr, stream: TcpStream) -> Result<(
             Ok(value) => {
                 let response = match Command::from_resp(value) {
                     Ok(mut cmd) => match cmd.action() {
+                        Action::ClientId => resp::integer(client_id as i64),
                         Action::Multi => {
                             if let None = transaction {
                                 transaction = Some(Transaction::new());
@@ -254,7 +255,7 @@ fn execute_set(store: &mut Store, mut cmd: Command) -> resp::Value {
             CommandOpt::SetKeepTtl => keep_ttl = true,
             CommandOpt::SetXx => xx = true,
             CommandOpt::SetNx => nx = true,
-            _ => continue,
+            // _ => continue,
         };
     }
 
