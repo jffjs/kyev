@@ -151,7 +151,7 @@ async fn connection_loop(client_addr: SocketAddr, stream: TcpStream) -> Result<(
         }
     }
 
-    STORE.write().await.remove_client(&client_addr);
+    STORE.write().await.remove_client(client_id);
     println!("Client disconnected: {}", client_addr);
 
     Ok(())
@@ -207,6 +207,7 @@ fn execute_read_cmd(store: &Store, cmd: Command) -> resp::Value {
     match cmd.action() {
         Get => execute_get(store, cmd),
         Ttl => execute_ttl(store, cmd),
+        ClientList => execute_client_list(store),
         _ => panic!("Command '{}' should be executed with write access", cmd),
     }
 }
@@ -387,4 +388,13 @@ fn execute_ttl(store: &Store, cmd: Command) -> resp::Value {
         TTL::NoExpiration => -1,
         TTL::KeyNotFound => -2,
     })
+}
+
+fn execute_client_list(store: &Store) -> resp::Value {
+    let clients: Vec<String> = store
+        .clients()
+        .map(|client| format!("{}", client))
+        .collect();
+    let clients = clients.join("\n");
+    resp::bulk_string(&clients)
 }

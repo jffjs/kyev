@@ -1,7 +1,8 @@
 use crate::command::Command;
 use async_std::net::SocketAddr;
 use async_std::task::JoinHandle;
-use std::collections::HashMap;
+use std::collections::{hash_map, HashMap};
+use std::fmt;
 use time::{Duration, PrimitiveDateTime};
 
 type ClientId = usize;
@@ -60,9 +61,26 @@ impl Entry {
     }
 }
 
+pub struct Client {
+    pub id: ClientId,
+    pub addr: SocketAddr,
+}
+
+impl Client {
+    fn new(id: ClientId, addr: SocketAddr) -> Client {
+        Client { id, addr }
+    }
+}
+
+impl fmt::Display for Client {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "id={} addr={}", self.id, self.addr)
+    }
+}
+
 pub struct Store {
     data: HashMap<String, Entry>,
-    clients: HashMap<SocketAddr, ClientId>,
+    clients: HashMap<ClientId, Client>,
     next_client_id: ClientId,
 }
 
@@ -78,12 +96,13 @@ impl Store {
     pub fn add_client(&mut self, addr: SocketAddr) -> ClientId {
         let client_id = self.next_client_id;
         self.next_client_id += 1;
-        self.clients.insert(addr, client_id);
+        let client = Client::new(client_id, addr);
+        self.clients.insert(client_id, client);
         client_id
     }
 
-    pub fn remove_client(&mut self, addr: &SocketAddr) {
-        self.clients.remove(addr);
+    pub fn remove_client(&mut self, id: ClientId) {
+        self.clients.remove(&id);
     }
 
     pub fn set(&mut self, key: String, value: String, keep_ttl: bool) -> Option<()> {
@@ -139,6 +158,10 @@ impl Store {
 
     pub fn last_touched(&self, key: &String) -> Option<&PrimitiveDateTime> {
         self.data.get(key).map(|entry| entry.touched_at()).or(None)
+    }
+
+    pub fn clients(&self) -> hash_map::Values<ClientId, Client> {
+        self.clients.values()
     }
 }
 

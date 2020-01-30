@@ -21,6 +21,7 @@ lazy_static! {
         map.insert("watch", Watch);
         map.insert("unwatch", Unwatch);
         map.insert("client id", ClientId);
+        map.insert("client list", ClientList);
 
         map
     };
@@ -62,6 +63,7 @@ pub enum Action {
     Watch,
     Unwatch,
     ClientId,
+    ClientList,
 }
 
 impl Action {
@@ -99,6 +101,7 @@ impl fmt::Display for Action {
             Watch => "watch".fmt(f),
             Unwatch => "unwatch".fmt(f),
             ClientId => "client id".fmt(f),
+            ClientList => "client list".fmt(f),
         }
     }
 }
@@ -169,6 +172,7 @@ impl Command {
                             Watch => parse_watch(&array),
                             Unwatch => parse_unwatch(&array),
                             ClientId => Ok(Command::new(ClientId, vec![], None)),
+                            ClientList => Ok(Command::new(ClientList, vec![], Some(Lock::Read))),
                         }
                     }
                     _ => Err(ParseCommandError::new(InvalidCommand, None)),
