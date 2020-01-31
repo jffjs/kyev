@@ -3,6 +3,7 @@ use async_std::net::SocketAddr;
 use async_std::task::JoinHandle;
 use std::collections::{hash_map, HashMap};
 use std::fmt;
+use std::mem::size_of;
 use time::{Duration, PrimitiveDateTime};
 
 type ClientId = usize;
@@ -162,6 +163,21 @@ impl Store {
 
     pub fn clients(&self) -> hash_map::Values<ClientId, Client> {
         self.clients.values()
+    }
+
+    pub fn mem_usage(&self) -> usize {
+        let mut size = 0;
+        for (k, v) in self.data.iter() {
+            size += size_of::<Entry>();
+            size += size_of::<String>();
+            size += k.as_bytes().len();
+            size += match &v.value {
+                Value::Int(_) => 0,
+                Value::Str(s) => s.as_bytes().len(),
+            };
+        }
+
+        size
     }
 }
 

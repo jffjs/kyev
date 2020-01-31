@@ -208,6 +208,7 @@ fn execute_read_cmd(store: &Store, cmd: Command) -> resp::Value {
         Get => execute_get(store, cmd),
         Ttl => execute_ttl(store, cmd),
         ClientList => execute_client_list(store),
+        MemoryUsage => resp::integer(store.mem_usage() as i64),
         _ => panic!("Command '{}' should be executed with write access", cmd),
     }
 }

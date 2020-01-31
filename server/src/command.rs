@@ -22,12 +22,14 @@ lazy_static! {
         map.insert("unwatch", Unwatch);
         map.insert("client id", ClientId);
         map.insert("client list", ClientList);
+        map.insert("memory usage", MemoryUsage);
 
         map
     };
     static ref COMMAND_PREFIX: HashSet<&'static str> = {
         let mut set = HashSet::new();
         set.insert("client");
+        set.insert("memory");
 
         set
     };
@@ -64,6 +66,7 @@ pub enum Action {
     Unwatch,
     ClientId,
     ClientList,
+    MemoryUsage,
 }
 
 impl Action {
@@ -102,6 +105,7 @@ impl fmt::Display for Action {
             Unwatch => "unwatch".fmt(f),
             ClientId => "client id".fmt(f),
             ClientList => "client list".fmt(f),
+            MemoryUsage => "memory usage".fmt(f),
         }
     }
 }
@@ -173,6 +177,7 @@ impl Command {
                             Unwatch => parse_unwatch(&array),
                             ClientId => Ok(Command::new(ClientId, vec![], None)),
                             ClientList => Ok(Command::new(ClientList, vec![], Some(Lock::Read))),
+                            MemoryUsage => Ok(Command::new(MemoryUsage, vec![], Some(Lock::Read))),
                         }
                     }
                     _ => Err(ParseCommandError::new(InvalidCommand, None)),
