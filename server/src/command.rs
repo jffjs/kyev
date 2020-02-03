@@ -177,7 +177,7 @@ impl Command {
                             Unwatch => parse_unwatch(&array),
                             ClientId => Ok(Command::new(ClientId, vec![], None)),
                             ClientList => Ok(Command::new(ClientList, vec![], Some(Lock::Read))),
-                            MemoryUsage => Ok(Command::new(MemoryUsage, vec![], Some(Lock::Read))),
+                            MemoryUsage => parse_memory_usage(&array),
                         }
                     }
                     _ => Err(ParseCommandError::new(InvalidCommand, None)),
@@ -526,6 +526,22 @@ fn parse_watch(array: &Vec<resp::Value>) -> Result<Command, ParseCommandError> {
 fn parse_unwatch(array: &Vec<resp::Value>) -> Result<Command, ParseCommandError> {
     expect_max_args(Action::Unwatch, array, 0)?;
     Ok(Command::new(Action::Unwatch, vec![], None))
+}
+
+fn parse_memory_usage(array: &Vec<resp::Value>) -> Result<Command, ParseCommandError> {
+    let action = Action::MemoryUsage;
+    if array.len() != 3 {
+        Err(ParseCommandError::new(
+            ParseCommandErrorKind::WrongNumberArgs,
+            Some(action),
+        ))
+    } else {
+        Ok(Command::new(
+            action,
+            vec![next_arg(array.iter().skip(2), action)?],
+            Some(Lock::Read),
+        ))
+    }
 }
 
 #[cfg(test)]
